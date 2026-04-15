@@ -1,7 +1,5 @@
 import os, sys, requests, datetime, json, re
 # Required program management
-#import resfile
-# Resource file that contains the executable icon
 import pandas as pnd
 # Soft required for CSV management (not required, but improves formatting)
 from PyQt6.QtCore import *
@@ -12,7 +10,8 @@ from PyQt6.QtWidgets import *
 # PyQt is the application/window framework (UI for the whole app)
 
 
-tepgVer = "0.4.15.0454"
+
+tepgVer = "0.4.16.0012"
 """TEPG program version (Y.MM.DD.HHMM)"""
 
 
@@ -21,6 +20,8 @@ directory = None
 """The base directory of the program, where TEPG.exe resides"""
 iconPath = None
 """The path of the app icon png"""
+
+
 
 if getattr(sys, "frozen", False):
 # since the program bundled with pyInstaller, it's "frozen"
@@ -32,6 +33,8 @@ else:
     directory = os.path.dirname(__file__)
     iconPath = os.path.join(directory, "tepgIcon.png")
     # reassigns the path variables accordingly
+
+
 
 profilePath = os.path.join(directory, "Data", "Profile")
 """The user profile path"""
@@ -45,6 +48,7 @@ streakMapPath = os.path.join(directory, "Streak List.json")
 """The streak map json file path"""
 
 
+
 profileName = None
 """The user profile (folder) name"""
 clientID = None
@@ -53,18 +57,33 @@ enableStreaks = False
 """The boolean for streak checking"""
 autoAddStreaks = False
 """The boolean for adding streaks automatically"""
-enablePoints = True
+autoRemoveStreaks = False
+"""The boolean for removing stale streaks automaticall"""
+enablePoints = False
 """The boolean for point checking"""
 enableErrorLog = False
 """The boolean for error storing in CSV"""
 streakMap = {}
 """The map that holds all the streak list information"""
+excludedEntries = ["enableErrorsInCSV", "autoAddStreaks", "autoRemoveStreaks", "exampleChannel"]
+"""A list of entries that shouldn't count for the streak list"""
 overrideChannel = None
 """The single channel name, if using single channel"""
 canRun = False
 """Boolean that determines if the main window can start (True after first window completes)"""
+activeOnly = False
+"""Boolean that determines if the grabbed streaks should be previously active"""
 browserOnly = False
 """Boolean that determines if the main window should run in browser-only view"""
+
+
+
+reqSession = requests.Session()
+"""A request session that stores cached request information"""
+
+os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-widevine --enable-gpu --enable-hls --disable-webgpu"
+# environment flags for the chromium webengine (directory stuff, ensures hardware acceleration is on)
+
 
 
 def folders(path):
@@ -77,7 +96,14 @@ def folders(path):
             # joins and goes to next
 
 
+
+
+
 ### Starter Window UI ###
+
+
+
+
 
 class starterWindow(QMainWindow):
     """A class for the first window that pops up"""
@@ -418,7 +444,7 @@ class starterWindow(QMainWindow):
 
     def configWindow(self):
         """Function to show the configuration window"""
-        global streakMap, enableErrorLog, enableStreaks, autoAddStreaks
+        global streakMap, enableErrorLog, autoAddStreaks, autoRemoveStreaks
         # global -> local
 
         self.configLayout = QGridLayout()
@@ -435,12 +461,12 @@ class starterWindow(QMainWindow):
                 # loads the json map into variable
             try:
             # tries to get the values
-                enableStreaks = streakMap["enableStreaks"]
-                # grabs the boolean from the map
                 enableErrorLog = streakMap["enableErrorsInCSV"]
                 # gets the boolean for error logging
                 autoAddStreaks = streakMap["autoAddStreaks"]
                 # gets the boolean for auto-adding streaks
+                autoRemoveStreaks = streakMap["autoRemoveStreaks"]
+                # gets the boolean for auto-removing streaks
             except:
             # if the value grab fails
                 self.labelSwap.emit("Error reading the config file, please re-configure")
@@ -491,27 +517,27 @@ class starterWindow(QMainWindow):
         self.labelSwap.emit("Select the options to use, please")
         # changes the main label
         
-        self.enableStreakCheckbox = QCheckBox("Check channels' streaks")
-        # adds a checkbox for enableStreak
         self.autoAddStreaksCheckbox = QCheckBox("Automatically add streaks")
         # adds a checkbox for autoAddStreaks
+        self.autoRemoveStreaksCheckbox = QCheckBox("Automatically remove streaks")
+        # adds a checkbox for autoRemoveStreaks
         self.enableCSVErrorsCheckbox = QCheckBox("Enable error storing in CSV")
         # adds a checkbox for enableErrorLog
 
-        self.enableStreakText = QLabel("Whether to grab current streak information along with the points")
-        self.autoAddStreakText = QLabel("Whether to automatically add channels into the streak list, if they have an active streak")
+        self.autoAddStreakText = QLabel("Automatically add channels into the streak list, if they have an active streak")
+        self.autoRemoveStreaksText = QLabel("Automatically remove stale streaks (previously stored, but now 0)")
         self.enableCSVErrorsText = QLabel("Whether to add any point grab errors into CSV")
         # adds tooltips for all 3
 
-        self.enableStreakCheckbox.setChecked(enableStreaks)
         self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
+        self.autoRemoveStreaksCheckbox.setChecked(autoRemoveStreaks)
         self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
         # sets the check status based on the stored booleans (false by default)
 
-        self.enableStreakText.setAlignment(
+        self.autoAddStreakText.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
         )
-        self.autoAddStreakText.setAlignment(
+        self.autoRemoveStreaksText.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
         )
         self.enableCSVErrorsText.setAlignment(
@@ -519,14 +545,15 @@ class starterWindow(QMainWindow):
         )
         # centers all 3 text fields to the top of their slots
 
-        self.configLayout.addWidget(self.enableStreakCheckbox, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.autoAddStreaksCheckbox, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.autoAddStreaksCheckbox, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.autoRemoveStreaksCheckbox, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds checkboxes to layout
 
-        self.configLayout.addWidget(self.enableStreakText, 2, 0)
-        self.configLayout.addWidget(self.autoAddStreakText, 4, 0)
+        self.configLayout.addWidget(self.autoAddStreakText, 2, 0)
+        self.configLayout.addWidget(self.autoRemoveStreaksText, 4, 0)
         self.configLayout.addWidget(self.enableCSVErrorsText, 6, 0)
+        # adds the text widgets to layout
 
         self.configLayoutTopSpacer = QSpacerItem(50, 50)
         self.configLayoutBotSpacer = QSpacerItem(50, 50)
@@ -551,12 +578,12 @@ class starterWindow(QMainWindow):
     def modifyConfigText(self):
         """Function to just set the text with a delay"""
 
-        self.enableStreakCheckbox.hide()
         self.autoAddStreaksCheckbox.hide()
+        self.autoRemoveStreaksCheckbox.hide()
         self.enableCSVErrorsCheckbox.hide()
         # hides the checkboxes
-        self.enableStreakText.deleteLater()
         self.autoAddStreakText.deleteLater()
+        self.autoRemoveStreaksText.deleteLater()
         self.enableCSVErrorsText.deleteLater()
         # deletes the texts
         self.mainLayout.removeWidget(self.configPrepDoneButton)
@@ -572,22 +599,22 @@ class starterWindow(QMainWindow):
     
     def modifyConfig(self):
         """The function that actually modifies the config"""
-        global enableErrorLog, enableStreaks, streakMap, autoAddStreaks
+        global enableErrorLog, streakMap, autoAddStreaks, autoRemoveStreaks
         # global -> local
 
-        streakMap["enableStreaks"] = self.enableStreakCheckbox.isChecked()
         streakMap["autoAddStreaks"] = self.autoAddStreaksCheckbox.isChecked()
+        streakMap["autoRemoveStreaks"] = self.autoRemoveStreaksCheckbox.isChecked()
         streakMap["enableErrorsInCSV"] = self.enableCSVErrorsCheckbox.isChecked()
         streakMap["exampleChannel"] = "exampleChannelID"
         # adds map settings
 
-        enableStreaks = self.enableStreakCheckbox.isChecked()
         autoAddStreaks = self.autoAddStreaksCheckbox.isChecked()
+        autoRemoveStreaks = self.autoRemoveStreaksCheckbox.isChecked()
         enableErrorLog = self.enableCSVErrorsCheckbox.isChecked()
         # sets the global booleans based on the checkbox values
 
-        self.enableStreakCheckbox.deleteLater()
         self.autoAddStreaksCheckbox.deleteLater()
+        self.autoRemoveStreaksCheckbox.deleteLater()
         self.enableCSVErrorsCheckbox.deleteLater()
         # deletes the checkboxes from memory after they've been checked
 
@@ -624,25 +651,22 @@ class starterWindow(QMainWindow):
         self.mainLayout.addLayout(self.taskLayout, 2, 1, 2, 3)
         # adds the config layout to the center of the doc (spans from 2x1 to 3x3)
 
-        self.pointGrabTask = QPushButton("Get channel point balances")
-        self.streakGrabTask = QPushButton("Get active streaks")
-        self.bothGrabTask = QPushButton("Get both balances and streaks")
-        self.singleGrabTask = QPushButton("Get a single channel's balance and streak")
+        self.pointGrabTask = QPushButton("Channel Points")
+        self.streakGrabTask = QPushButton("Channel Streaks")
+        self.singleGrabTask = QPushButton("Single Channel")
         self.skipToBrowser = QPushButton("Skip to browser view")
         # adds the buttons to determine task
 
         self.pointGrabTask.setMinimumSize(250, 40)
         self.streakGrabTask.setMinimumSize(250, 40)
-        self.bothGrabTask.setMinimumSize(250, 40)
         self.singleGrabTask.setMinimumSize(250, 40)
         self.skipToBrowser.setMinimumSize(250, 40)
         # sets the sizes of the buttons
 
         self.taskLayout.addWidget(self.pointGrabTask, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.taskLayout.addWidget(self.streakGrabTask, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.bothGrabTask, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.singleGrabTask, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.skipToBrowser, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.singleGrabTask, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.skipToBrowser, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds all the buttons to layout
 
         try:
@@ -656,27 +680,25 @@ class starterWindow(QMainWindow):
             # does nothing
 
         self.taskLayout.addItem(self.taskLayoutTopSpacer, 0, 0)
-        self.taskLayout.addItem(self.taskLayoutBotSpacer, 6, 0)
+        self.taskLayout.addItem(self.taskLayoutBotSpacer, 5, 0)
         # adds the spacers to layout (above and below selections, to squish them a bit
 
-        self.pointGrabTask.clicked.connect(lambda: self.taskChooser("Channel Point Balances", 1))
-        self.streakGrabTask.clicked.connect(lambda: self.taskChooser("Active Streaks", 2))
-        self.bothGrabTask.clicked.connect(lambda: self.taskChooser("Balances and Streaks", 3))
-        self.singleGrabTask.clicked.connect(lambda: self.taskChooser("Single Channel", 4))
-        self.skipToBrowser.clicked.connect(lambda: self.taskChooser("Skip to Browser", 5))
-        # calls the task chooser to queue the task(s)
+        self.pointGrabTask.clicked.connect(lambda: self.taskChooser("Channel Points", 1))
+        self.streakGrabTask.clicked.connect(lambda: self.taskChooser("Channel Streaks", 2))
+        self.singleGrabTask.clicked.connect(lambda: self.taskChooser("Single Channel", 3))
+        self.skipToBrowser.clicked.connect(lambda: self.taskChooser("Skip to Browser", 4))
+        # calls the task chooser to further check the task(s)
 
-### Task Selection -> Task Queue ###
+### Subtask Selection -> Task Run ###
 
     def taskChooser(self, task: str, taskNum: int):
         """Function to set the tasks to run based on chosen task(s)"""
-        global enablePoints, enableStreaks, browserOnly
+        global browserOnly
         # global -> local
         try:
         # tries to delete previous elements
             self.pointGrabTask.deleteLater()
             self.streakGrabTask.deleteLater()
-            self.bothGrabTask.deleteLater()
             self.singleGrabTask.deleteLater()
             self.skipToBrowser.deleteLater()
             # removes/deletes the previous elements
@@ -685,69 +707,117 @@ class starterWindow(QMainWindow):
             None
             # does nothing
 
-        self.labelSwap.emit(f"Selected task:\n{task}")
-        # swaps the main label
+        self.labelSwap.emit(f"Selected {task}...")
+        # user inform (may be pretty quick flash)
+
+        self.taskChooseBackButton = QPushButton("Back")
+        # back button, in case points was not the intended selection
+        self.taskChooseBackButton.setMinimumSize(250, 40)
+        # sets minimum size
+        self.taskChooseBackButton.clicked.connect(self.returnToConfigChooser)
+        # calls the chooser config caller with 1 step (goes back to task selection)
+
+        self.taskPointsAndStreaksButton = QPushButton("All Points and Streaks")
+        # pre-creates a button for both streaks and points
+        self.taskPointsAndStreaksButton.setMinimumSize(250, 40)
+        # sets minimum size
+        self.taskPointsAndStreaksButton.clicked.connect(lambda: self.taskRunner(1, 2, None))
+        # if the points + streaks button is pressed, calls taskRunner with task 1 subtask 2
+
+        self.taskChooseBackSpacer = QSpacerItem(250, 40)
+        # adds a spacer that can be placed between the other buttons and "back"
+
+        self.subtaskLayout = QGridLayout()
+        # creates a new layout for the buttons
+        self.taskLayout.addLayout(self.subtaskLayout, 2, 0)
+        # adds the layout under the top spacer and text field, center (only) column
 
         if taskNum == 1:
         # task 1 is channel points
-            enableStreaks = False
-            # ensures the streaks are disabled (points-only)
-            self.taskRunner(1)
-            # runs the task runner with command 1
+            self.labelSwap.emit(f"Select a {task} subtask:")
+            # swap label
+            
+            self.allPointsButton = QPushButton("All Points")
+            # all points button
+            self.allPointsButton.setMinimumSize(250, 40)
+            # sets minimum size
+
+            self.subtaskLayout.addWidget(self.allPointsButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the all points button to layout
+            self.subtaskLayout.addWidget(self.taskPointsAndStreaksButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the streaks + points button
+            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the spacer
+            self.subtaskLayout.addWidget(self.taskChooseBackButton, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the back button
+
+            self.allPointsButton.clicked.connect(lambda: self.taskRunner(1, 1, None))
+            # all points calls taskRunner with task 1 subtask 1
 
         elif taskNum == 2:
         # task 2 is streaks
-            enablePoints = False
-            # disables point-grabbing (streak-only)
-            self.taskRunner(2)
-            # runs the task runner with command 2
+            self.labelSwap.emit(f"Select a {task} subtask:")
+            # swap label
+
+            self.allStreaksButton = QPushButton("All Streaks")
+            # all streaks button
+            self.allStreaksButton.setMinimumSize(250, 40)
+            # sets minimum size
+
+            self.activeStreaksButton = QPushButton("Active Streaks")
+            # all streaks button
+            self.activeStreaksButton.setMinimumSize(250, 40)
+            # sets minimum size
+
+            self.subtaskLayout.addWidget(self.allStreaksButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the all streaks button to layout
+            self.subtaskLayout.addWidget(self.activeStreaksButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the active streaks button to layout
+            self.subtaskLayout.addWidget(self.taskPointsAndStreaksButton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the streaks + points button
+            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the spacer
+            self.subtaskLayout.addWidget(self.taskChooseBackButton, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the back button
+
+            self.allStreaksButton.clicked.connect(lambda: self.taskRunner(2, 1, None))
+            # all streaks calls taskRunner with task 2 subtask 1
+            self.activeStreaksButton.clicked.connect(lambda: self.taskRunner(2, 2, None))
+            # active streaks calls taskRunner with task 2 subtask 2
 
         elif taskNum == 3:
-        # task 3 is both
-            enablePoints = enableStreaks = True
-            # sets both to True
-            self.taskRunner(3)
-            # runs the task runner with command 3
-
-        elif taskNum == 4:
-        # task 4 is a single channel
-            self.labelSwap.emit("Please enter a single channel:")
+        # task 3 is single channel
+            self.labelSwap.emit("Please enter a channel:")
             # swap label
-            
-            self.taskSingleBackButton = QPushButton("Back")
-            # back button, in case single channel was not the intended
-            self.taskSingleBackButton.setMinimumSize(100, 50)
-            # sets minimum size
 
             self.taskSingleSubmitButton = QPushButton("Submit")
             # submit button to enter channel
-            self.taskSingleSubmitButton.setMinimumSize(100, 50)
+            self.taskSingleSubmitButton.setMinimumSize(250, 40)
             # sets minimum size
-
-            self.taskSingleLayout = QGridLayout()
-            # creates a new layout for the buttons
-            self.taskLayout.addLayout(self.taskSingleLayout, 2, 0)
-            # adds the layout under the top spacer and text field, center (only) column
 
             self.taskSingleChannelName = QLineEdit()
             # a user input field for the channel name
             self.taskSingleChannelName.setPlaceholderText("Channel name")
             # adds a placeholder (background) text
-            self.taskSingleChannelName.setMinimumSize(250, 30)
+            self.taskSingleChannelName.setMinimumSize(250, 40)
             # sets minimum size
+            self.taskSingleChannelName.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # aligns the text to center
 
-            self.taskSingleLayout.addWidget(self.taskSingleSubmitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-            self.taskSingleLayout.addWidget(self.taskSingleBackButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            self.taskLayout.addWidget(self.taskSingleChannelName, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the items to layout
+            self.subtaskLayout.addWidget(self.taskSingleChannelName, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the channel name input field
+            self.subtaskLayout.addWidget(self.taskSingleSubmitButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the submit channel button
+            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the back button spacer
+            self.subtaskLayout.addWidget(self.taskChooseBackButton, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the back button
 
-            self.taskSingleBackButton.clicked.connect(self.returnToConfigChooser)
-            # calls the chooser config caller
-            self.taskSingleSubmitButton.clicked.connect(lambda: self.taskRunner(4, self.taskSingleChannelName.text()))
-            # runs the task with command 4 and the channel name field's text
+            self.taskSingleSubmitButton.clicked.connect(lambda: self.taskRunner(3, 0, self.taskSingleChannelName.text()))
+            # runs the task with command 3 and the channel name field's text
 
-        elif taskNum == 5:
-        # if it's 5 (skips to browser for login management)
+        elif taskNum == 4:
+        # if it's 4 (skips to browser for login management)
             self.labelSwap.emit("Opening browser view...")
             # user inform
             browserOnly = True
@@ -755,40 +825,102 @@ class starterWindow(QMainWindow):
             QTimer.singleShot(1500, self.taskRunner)
             # calls taskRunner after 1.5s
 
+### Back to Config Chooser ###
+
     def returnToConfigChooser(self):
         """Function to return back to the config selection screen"""
         try:
-            self.taskSingleBackButton.deleteLater()
-            self.taskSingleSubmitButton.deleteLater()
-            # deletes both buttons
-            self.taskSingleChannelName.deleteLater()
-            # deletes the text field
+        # tries (may "fail")
+            while self.subtaskLayout.count():
+            # while there's items in the subtask layout
+                item = self.subtaskLayout.takeAt(0)
+                # grabs the item at position 0
+                try:
+                # tries to take the widget info (can't if it's an item like spacer)
+                    widget = item.widget()
+                    # grabs the widget from the item
+                    if widget:
+                    # if there's a widget set
+                        widget.deleteLater()
+                        # deletes the widget
+                except:
+                # if it can't (probably a spacer)
+                    self.subtaskLayout.removeItem(item)
+                    # removes it instead
+            self.subtaskLayout.deleteLater()
+            # finally, deletes the whole layout
         except:
-            None
-        
-        self.taskChooserConfig()
-        # calls the task chooser config again (goes back)
-    
-    def taskRunner(self, task:int=None, channel:str=None):
-        """Function to run the selected task"""
-        global overrideChannel, canRun
-        # global -> local
-        try:
-        # tries to delete the buttons and such
-            self.taskSingleBackButton.deleteLater()
-            self.taskSingleSubmitButton.deleteLater()
-            # deletes both buttons
-            self.taskSingleChannelName.deleteLater()
-            # deletes the text field
-        except:
-        # if it can't
+        # fail usually just means an item was deleted unexpectedly (which is fine)
             None
             # does nothing
+        
+        self.taskChooserConfig()
+        # calls the task chooser config after
 
-        if task == 4:
-        # if the task is 4 (single channel)
+### Task Run ###    
+
+    def taskRunner(self, task:int=None, subtask:int=None, channel:str=None):
+        """Function to run the selected task"""
+        global overrideChannel, canRun, activeOnly, enableStreaks, enablePoints
+        # global -> local
+        try:
+        # tries (may "fail")
+            while self.subtaskLayout.count():
+            # while there's items in the subtask layout
+                item = self.subtaskLayout.takeAt(0)
+                # grabs the item at position 0
+                try:
+                # tries to take the widget info (can't if it's an item like spacer)
+                    widget = item.widget()
+                    # grabs the widget from the item
+                    if widget:
+                    # if there's a widget set
+                        widget.deleteLater()
+                        # deletes the widget
+                except:
+                # if it can't (probably a spacer)
+                    self.subtaskLayout.removeItem(item)
+                    # removes it instead
+            self.subtaskLayout.deleteLater()
+            # finally, deletes the whole layout
+        except:
+        # fail usually just means an item was deleted unexpectedly (which is fine)
+            None
+            # does nothing
+        
+        if task == 1:
+        # task 1 is points-related
+            if subtask == 1:
+            # subtask 1 is just points
+                enablePoints = True
+                # sets the points to True (streaks stays false)
+            elif subtask == 2:
+            # subtask 2 is points and streaks
+                enablePoints = True
+                enableStreaks = True
+                # sets both booleans to True
+
+        elif task == 2:
+        # task 2 is streaks-related
+            if subtask == 1:
+            # subtask 1 is all streaks
+                enableStreaks = True
+                # sets the streaks to True (points stays false)
+            elif subtask == 2:
+            # subtask 2 is active streaks
+                enableStreaks = True
+                activeOnly = True
+                # sets the streak-related booleans to True
+
+        elif task == 3:
+        # task 3 is single channel
             overrideChannel = channel.strip()
             # sets the override channel global variable to match the passed channel name
+
+        else:
+        # anything not 1-3 (just 4 or a mistake) falls here
+            None
+            # doesn't change anything
 
         self.labelSwap.emit("Starting the main TEPG program...")
         # swaps the label once more
@@ -799,10 +931,15 @@ class starterWindow(QMainWindow):
         QTimer.singleShot(2500, self.stopper)
         # quits the starter application window with a small delay
 
+### Stopper ###
+
     def stopper(self):
         """Function to call when a stop is needed (with a delay)"""
         self.close()
         # just closes the window
+
+
+
 
 
 ### Starter Startup ###
@@ -816,11 +953,11 @@ startApp.exec()
 
 
 
-reqSession = requests.Session()
-"""A request session that stores cached request information"""
 
-os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-widevine --enable-gpu --enable-hls --disable-webgpu"
-# environment flags for the chromium webengine (directory stuff, ensures hardware acceleration is on)
+
+### Main App Window ###
+
+
 
 
 
@@ -1028,17 +1165,28 @@ class tepgWindow(QMainWindow):
         # sets the progress bar's size, so that the spacers don't do weird stuff
 
         self.channelLabel = QLabel()
-        if enablePoints:
-        # if the point grabbing is enabled
+        # adds a label for the channel's info text
+        if enablePoints and not enableStreaks:
+        # if the point grabbing is enabled, streaks disabled
             self.channelLabel.setText("Starting point grabber...")
+            # sets initial text
+        elif not enablePoints and enableStreaks:
+        # if the point grabbing is disabled, streaks enabled
+            self.channelLabel.setText("Starting streakg grabber...")
+            # sets initial text
         else:
-        # if it's disabled
-            self.channelLabel.setText("Starting streak grabber...")
+        # something else?
+            self.channelLabel.setText("Starting grabber...")
             # sets initial text
         self.channelLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
+        self.channelLabel.setFixedSize(QSize(300, 30))
+        # sets fixed size
+        self.channelLabel.setWordWrap(True)
+        # allows the text to wrap, if it's too long
 
         self.totalLabel = QLabel()
+        # total label (total found points)
         self.totalLabel.setText("Nothing found yet")
         # sets initial text
         self.totalLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1078,14 +1226,16 @@ class tepgWindow(QMainWindow):
             # the channel name (str)
             index = progressDict["index"]
             # the channel's position in the list (0:X)
+            pointsOn = progressDict["pointsOn"]
+            # boolean for whether points are being checked
             points = progressDict["points"]
             # point count (int)
             error = progressDict["error"]
             # boolean for whether an error occurred
             total = progressDict["total"]
             # the total points so far
-            streaks = progressDict["streaks"]
-            # whether this channel's streak is enabled
+            streaksOn = progressDict["streaksOn"]
+            # boolean for whether streaks are being checked
             streak = progressDict["streak"]
             # the current channel's streak
             # grabs all the relevant information from the passed dictionary
@@ -1096,45 +1246,71 @@ class tepgWindow(QMainWindow):
             self.progressBar.setValue(percentage)
             # sets the progress bar value
 
-            if points == "Not checked":
-            # if the points have a set string
-                pointString = f""
-                # sets the point string to empty
-                midString = "A"
-                # makes the midString "A" -> "A streak of"
-            else:
-            # if the points are set to something else (a number)
-                pointString = f"{points:,} points found"
-                # formats the number to use formatting (no decimals, thousand comma)
-                if streaks:
-                # if streaks are enabled
-                    midString = f" and a"
-                    # "x points found and a streak of"
-
-            if total == "Not checked":
-            # if the total is unchecked (no point gathering)
-                totalString = f""
-                # sets to empty
-            else:
-            # if the total is not that (number)
-                totalString = f"Points across channels: {total:,}"
-                # formats the total number
-
-            if error:
-            # if there's an error reported
-                self.channelLabel.setText(f"Error with {channel}, couldn't get points")
-                # sets an error text
-            else:
-                if streaks:
-                # if the streaks are enabled for this channel
-                    self.channelLabel.setText(f"{pointString}{midString} streak of {streak} found for {channel}")
-                    # sets the text to match
+            if pointsOn:
+            # if point-checking is enabled
+                if points == "Not checked":
+                # if the points have a set string
+                    pointString = f""
+                    # sets the point string to empty
+                    midString = "A"
+                    # makes the midString "A" -> "A streak of"
                 else:
-                    self.channelLabel.setText(f"{pointString} for {channel}!")
-                    # sets the text to match
+                # if the points are set to something else (a number)
+                    pointString = f"{points:,} points found"
+                    # formats the number to use formatting (no decimals, thousand comma)
+                    if streaksOn:
+                    # if streaks are enabled
+                        midString = f" and a"
+                        # "x points found and a streak of"
 
-            self.totalLabel.setText(f"{totalString}")
-            # sets the total string to match
+                if total == "Not checked":
+                # if the total is unchecked (no point gathering)
+                    totalString = f""
+                    # sets to empty
+                else:
+                # if the total is not that (number)
+                    totalString = f"Points across channels: {total:,}"
+                    # formats the total number
+
+                if error:
+                # if there's an error reported
+                    self.channelLabel.setText(f"Error with {channel}, couldn't get points")
+                    # sets an error text
+                else:
+                # if no error
+                    if streaksOn:
+                    # if the streaks are enabled
+                        self.channelLabel.setText(f"{pointString}{midString} streak of {streak} found for {channel}")
+                        # sets the text to match
+                    else:
+                    # streaks disabled
+                        self.channelLabel.setText(f"{pointString} for {channel}!")
+                        # sets the text to match
+
+                self.totalLabel.setText(f"{totalString}")
+                # sets the total string to match
+
+            else:
+            # if point-checking isn't enabled (must mean streaks are)
+                self.totalLabel.setText("")
+                # clears the total label
+                if error:
+                # if there's an error
+                    self.channelLabel.setText(f"Error with {channel}, couldn't get streak")
+                    # sets an error text
+                else:
+                # if no error
+                    if streak == 0:
+                    # if the streak is 0
+                        self.channelLabel.setText(f"{channel} has no active streak!")
+                        # no streak text
+                    elif streak < 100 and (str(streak).startswith("8") or streak == 18 or streak == 11):
+                    # if streak is <100, and one of: the first number of streak is an 8 (eighty-X or just 8) or it's 11 or 18
+                        self.channelLabel.setText(f"{channel} has an {streak}-day streak!")
+                        # sets the text to match (it has "an" as prefix, not "a")
+                    else:
+                        self.channelLabel.setText(f"{channel} has a {streak}-day streak!")
+                        # sets the text to match
 
             self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
             # sets the current channel index string
@@ -1169,15 +1345,29 @@ class tepgWindow(QMainWindow):
     def progressDone(self, errors: int, streak: int):
         """A function to change the headless UI into completion mode"""
         preFinalText = self.totalLabel.text()
-        # gets the text from the label 
-        if enableStreaks:
-        # if streaks are enabled
-            self.totalLabel.setText(f"{preFinalText} - highest streak: {streak}")
-            # makes the total label state the max streak as well
+        # gets the text from the label
+        if enablePoints:
+        # if points are enabled
+            if enableStreaks:
+            # if streaks are enabled
+                self.totalLabel.setText(f"{preFinalText} - highest streak: {streak}")
+                # makes the total label state the max streak as well
+            else:
+            # if streaks aren't enabled
+                self.totalLabel.setText(f"{preFinalText}")
+                # sets the text to match
+        elif enableStreaks:
+        # if only streaks are enabled
+            self.totalLabel.setText(f"Highest streak: {streak}")
+        else:
+        # if neither is, must be a single channel
+            self.totalLabel.setText(f"")
+            # sets no label
+
         if errors > 0:
         # if there was at least one error
             finalString = (
-                        f"All channels scoured - points have been saved to CSV!\n\n"
+                        f"All channels scoured - stats have been saved to CSV!\n\n"
                         f"TEPG was unable to store points for {errors} out of {len(self.channels)} channels\n\n"
                         f"Feel free to exit, thank you for using TEPG <3\n"
                         )
@@ -1185,7 +1375,7 @@ class tepgWindow(QMainWindow):
         else:
         # if there were no errors
             finalString = (
-                        f"All channels scoured - points have been saved to CSV!\n\n\n"
+                        f"All channels scoured - stats have been saved to CSV!\n\n\n"
                         f"Feel free to exit, thank you for using TEPG <3\n"
                         )
             # forms final string with no errors
@@ -1327,14 +1517,23 @@ class tepgWindow(QMainWindow):
 
         if self.overrideChannel == None:
         # if there's no override channel set
-            with open(self.channelTxtPath) as channelFile:
-            # opens the channel list.txt file 
-                for channel in channelFile:
-                # goes through each line (channel)
-                    channel = channel.strip("\n")
-                    # removes the newline marker
-                    self.channels.append(channel)
-                    # adds the channel to the list of channels
+            if activeOnly:
+            # if the active streaks only check is enabled
+                self.channels = [
+                                entry for entry in streakMap 
+                                if entry not in excludedEntries
+                                ]
+                # adds streaks from streakMap (excludes set entries)
+            else:
+            # if active streaks only is not on
+                with open(self.channelTxtPath) as channelFile:
+                # opens the channel list.txt file 
+                    for channel in channelFile:
+                    # goes through each line (channel)
+                        channel = channel.strip("\n")
+                        # removes the newline marker
+                        self.channels.append(channel)
+                        # adds the channel to the list of channels
 
             self.taskText.emit(f"Found {len(self.channels)} channels...")
             # user update
@@ -1421,7 +1620,7 @@ def pointGrabber(state, channel: str) -> dict:
             points = data["data"]["community"]["channel"]["self"]["communityPoints"]
             # stores the location of the points in the data json
             try:
-                return {"success": True, "points": points["balance"]}
+                return {"success": True, "error": "None", "points": points["balance"]}
                 # returns a dictionary with success
 
             except Exception as twErr:
@@ -1430,7 +1629,7 @@ def pointGrabber(state, channel: str) -> dict:
                 # returns a dictionary with failure
         else:
         # if the data package isn't valid and/or there's no data header
-            return {"success": False, "error": "User likely banned"}
+            return {"success": False, "error": "No data rece"}
             # returns a dictionary with failure
 
     except Exception as dtErr:
@@ -1441,7 +1640,7 @@ def pointGrabber(state, channel: str) -> dict:
 
 ### Streak Grabber ###
 
-def streakGrabber(state, channel: str, channelID:str = None) -> dict:
+def streakGrabber(state, channel: str, channelID:int = None) -> dict:
     """The function that grabs streak information"""
     global clientID, reqSession
 
@@ -1493,6 +1692,9 @@ def streakGrabber(state, channel: str, channelID:str = None) -> dict:
         # if it can't access/fails at 
             return {"success": False, "error": "ChannelID failure"}
             # returns a failure dict
+
+    channelID = str(channelID)
+    # stringifies the channelID
     
     if channelID != None:
     # if the channelID is now not None
@@ -1500,7 +1702,6 @@ def streakGrabber(state, channel: str, channelID:str = None) -> dict:
         # forms a payload from the required information
             "operationName": "RewardList",
             "variables": {
-                "channelLogin": channel,
                 "channelID": channelID
                 # which channel to "login" to
             },
@@ -1525,7 +1726,7 @@ def streakGrabber(state, channel: str, channelID:str = None) -> dict:
                 streak = data["data"]["channel"]["self"]["watchStreakMilestone"]["watchStreakMilestone"]
                 # stores the location of the streak in the data json
                 try:
-                    return {"success": True, "streak": streak["value"], "channelID": channelID}
+                    return {"success": True, "error": "None", "streak": streak["value"], "channelID": channelID}
                     # returns a dictionary with success
 
                 except Exception as twErr:
@@ -1534,7 +1735,7 @@ def streakGrabber(state, channel: str, channelID:str = None) -> dict:
                     # returns a dictionary with failure
             else:
             # if the data package isn't valid and/or there's no data header
-                return {"success": False, "error": "User likely banned"}
+                return {"success": False, "error": "No data received"}
                 # returns a dictionary with failure
 
         except Exception as dtErr:
@@ -1548,7 +1749,11 @@ def streakGrabber(state, channel: str, channelID:str = None) -> dict:
 
 
 
+
+
 ### Authorisation Token "Storage" ###
+
+
 
 class AppState:
     """A class to store the authorisation token"""
@@ -1558,7 +1763,13 @@ class AppState:
 
 
 
+
+
 ### Channel/Point Manager ###
+
+
+
+
 
 class PointWorker(QObject):
     # signals to communicate with UI
@@ -1579,12 +1790,6 @@ class PointWorker(QObject):
         # sets running to true
         self.streakMap = streakMap 
         # the streak map that contains the streak-grabbable channels
-        self.autoStreaks = autoAddStreaks
-        # the boolean to determine whether to auto-grab streaks
-        self.enableStreaks = enableStreaks
-        # the boolean to determine whether to grab streaks or not
-        self.enablePoints = enablePoints
-        # the boolean to determine whether to grab points or not
         self.overrideChannel = overrideChannel
         # the channel to potentially override with
 
@@ -1604,9 +1809,6 @@ class PointWorker(QObject):
         self.errorCount = 0
         # starts a counter for errors (how many channels couldn't be saved)
 
-        errorBool = False
-        # defaults to false
-
         self.maxStreak = 0
         # starts a maximum streak store
 
@@ -1615,6 +1817,9 @@ class PointWorker(QObject):
 
             for num, channel in enumerate(self.channels):
             # goes through each channel in the list (gets channel and index)
+
+                errorBool = False
+                # defaults the error boolean to false
 
                 if enablePoints:
                 # if the point grabbing is enabled
@@ -1626,8 +1831,6 @@ class PointWorker(QObject):
                     # checks the points entry for success boolean
                         foundPoints = int(points["points"])
                         # stores the points
-                        errorBool = False
-                        # sets the error bool to false
                     else:
                     # if the point entry success is False (something went wrong)
                         foundPoints = 0
@@ -1645,98 +1848,101 @@ class PointWorker(QObject):
                     self.totalPoints = "Not checked"
                     # sets the points to nothing
 
-                if self.enableStreaks:
+                if enableStreaks:
                 # if the streak-grabbing is enabled
-
-                    if self.enablePoints:
+                    if enablePoints:
                     # if points and streaks are enabled, slows down the process a bit more
                         QThread.msleep(1000)
                         # sleeps for a second (avoids limiting)
-                    
-                    if channel in streakMap:
-                    # if the channel is in the streak map
-                        streak = streakGrabber(self.state, channel, streakMap[channel])
-                        # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
+
+                    if activeOnly:
+                    # if the boolean for the "active streaks only" is true, won't check *all* channels
+                        if channel in streakMap:
+                        # if the channel is in the streak map
+                            streak = streakGrabber(self.state, channel, int(streakMap[channel]))
+                            # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
+                        else:
+                        # if the channel *isn't* in the map
+                            streak = {"success": False, "error": "No active streak stored"}
+                            # forms a custom dictionary to pass to csv
                     else:
-                    # if the channel isn't in the map
-                        streak = streakGrabber(self.state, channel)
-                        # calls the streak grabber to get the streak
+                    # if the boolean isn't active only, goes through all
+                        if channel in streakMap:
+                        # if the channel is in the streak map
+                            streak = streakGrabber(self.state, channel, int(streakMap[channel]))
+                            # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
+                        else:
+                        # if the channel isn't in the map
+                            streak = streakGrabber(self.state, channel)
+                            # calls the streak grabber to get the streak
 
                     if streak["success"]:
                     # if the streak success entry is true
                         streakNum = int(streak["streak"])
                         # gets the streak
-
                         if streakNum > 1 and channel not in streakMap and autoAddStreaks:
-                        # if there's a streak present and the channel isn't stored yet, plus the config option to add them to map is on
-                            streakMap[channel] = streak["channelID"]
-                            # stores the channel with its ID 
-
+                        # if there's a streak present and the channel isn't stored yet, plus the config option to add them to the streak map is on
+                            streakMap[channel] = int(streak["channelID"])
+                            # stores the channel with its ID
+                        elif streakNum == 0 and channel in streakMap and autoRemoveStreaks:
+                        # if there's no streak, the channel is in the map and the option to remove stales is on
+                            streakMap.pop(channel, None)
+                            # removes the entry for that channel
                     else:
                     # if the streak entry is false
                         streakNum = 0
                         # sets to default of 0
+                        errorBool = True
+                        # sets bool for error to true
 
                     if streakNum > self.maxStreak:
                     # if the current streak is larger than the stored max streak
                         self.maxStreak = streakNum
                         # reassigns the max streak to match
-                    
-                    if enableErrorLog:
-                    # if errors should be logged into CSV
-                        csvEntries[channel] = {
-                            "points": foundPoints,
-                            "streak": streakNum,
-                            "error": errorBool
-                        }
-                    else:
-                    # if not
-                        csvEntries[channel] = {
-                            "points": foundPoints,
-                            "streak": streakNum
-                        }
-                    # stores the points and streak in the channel's csv entry
-
-                    self.progressDict = {
-                        "type": "full",
-                        "channel": channel,
-                        "index": num,
-                        "points": foundPoints,
-                        "error": errorBool,
-                        "total": self.totalPoints,
-                        "streaks": True,
-                        "streak": streakNum 
-                    }
-                    # forms a progress dictionary to pass
 
                 else:
                 # if the streak-grabbing is disabled
+                    streakNum = 0
+                    # sets the streak number to 0
+                
+                if enablePoints and not enableStreaks:
+                # if only points are on
+                    errorReason = points.get("error", "None")
+                    # gets the error reason from points, None if none is found
+                else:
+                # if points are off or streaks are on
+                    errorReason = streak.get("error", "None")
+                    # gets the error reason from streak instead, None if none found
 
-                    if enableErrorLog:
-                    # if errors should be logged into CSV
-                        csvEntries[channel] = {
-                            "points": foundPoints,
-                            "streak": 0,
-                            "error": errorBool
-                        }
-                    else:
-                        csvEntries[channel] = {
-                            "points": foundPoints,
-                            "streak": 0
-                        }
-                        # stores the points in the channel's csv entry
-
-                    self.progressDict = {
-                        "type": "full",
-                        "channel": channel,
-                        "index": num,
+                if enableErrorLog:
+                # if errors should be logged to CSV
+                    csvEntries[channel] = {
                         "points": foundPoints,
+                        "streak": streakNum,
                         "error": errorBool,
-                        "total": self.totalPoints,
-                        "streaks": False,
-                        "streak": 0 
+                        "reason": errorReason
                     }
-                    # forms a progress dictionary to pass
+                    # creates a csv entry for the channel with the error and its reason
+                else:
+                # if errors shouldn't be logged to CSV
+                    csvEntries[channel] = {
+                        "points": foundPoints,
+                        "streak": streakNum
+                    }
+                    # stores the points and streak in the channel's csv entry
+
+                self.progressDict = {
+                    "type": "full",
+                    "channel": channel,
+                    "index": num,
+                    "pointsOn": enablePoints,
+                    "points": foundPoints,
+                    "error": errorBool,
+                    "total": self.totalPoints,
+                    "streaksOn": enableStreaks,
+                    "streak": streakNum
+                }
+                # forms a progress dictionary to pass
 
                 self.progress.emit(self.progressDict)
                 # sends a progress update to the headless UI updater
@@ -1776,8 +1982,8 @@ class PointWorker(QObject):
                 self.errorCount = (self.errorCount + 1)
                 # on error, adds an error to counter
 
-            self.totalPoints = (self.totalPoints + foundPoints)
-            # adds the channel's points to the total amount
+            self.totalPoints = foundPoints
+            # total is the channel's total
 
             streak = streakGrabber(self.state, channel)
             # calls the streak grabber to get the streak
@@ -1786,7 +1992,6 @@ class PointWorker(QObject):
             # if the streak success entry is true
                 streakNum = int(streak["streak"])
                 # gets the streak
-
             else:
             # if the streak entry is false
                 streakNum = 0
@@ -1795,7 +2000,8 @@ class PointWorker(QObject):
             csvEntries[channel] = {
                 "points": foundPoints,
                 "streak": streakNum,
-                "error": errorBool
+                "error": errorBool,
+                "reason": f"{points["error"]}, {streak["error"]}"
             }
             # forms the csvEntry for the channel
 
@@ -1803,10 +2009,11 @@ class PointWorker(QObject):
                 "type": "single",
                 "channel": channel,
                 "index": num,
+                "pointsOn": enablePoints,
                 "points": foundPoints,
                 "error": errorBool,
                 "total": self.totalPoints,
-                "streaks": False,
+                "streaksOn": enableStreaks,
                 "streak": 0 
             }
             # forms a progress dictionary to pass
@@ -1829,10 +2036,14 @@ class PointWorker(QObject):
             rows.append({
                 "Channel": channel,
                 # stores the channel name
-                "Points": int(values["points"]),
-                # stores the points
-                "Streak": int(values["streak"]),
-                # stores the streak
+                "Points": values.get("points", "Not found"),
+                # stores the points (not found if can't find)
+                "Streak": values.get("streak", "Not found"),
+                # stores the streak (not found if it can't find)
+                "Error": values.get("error", ""),
+                # stores the error boolean (nothing if none is set)
+                "Reason": values.get("reason", ""),
+                # stores the error reason (nothing if none is set)
                 "Timestamp": timestamp
                 # stores the timestamp (can be used to calculate points/timeframe later)
             })
@@ -1849,7 +2060,11 @@ class PointWorker(QObject):
             
 
 
-### Startup ###
+
+
+### Main Window Startup ###
+
+
 
 if canRun:
 # if the permission slip is signed, runs the main window
