@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import *
 # PyQt is the application/window framework (UI for the whole app)
 
 
-tepgVer = "0.4.15.0318"
+tepgVer = "0.4.15.0454"
 """TEPG program version (Y.MM.DD.HHMM)"""
 
 
@@ -63,6 +63,8 @@ overrideChannel = None
 """The single channel name, if using single channel"""
 canRun = False
 """Boolean that determines if the main window can start (True after first window completes)"""
+browserOnly = False
+"""Boolean that determines if the main window should run in browser-only view"""
 
 
 def folders(path):
@@ -626,18 +628,21 @@ class starterWindow(QMainWindow):
         self.streakGrabTask = QPushButton("Get active streaks")
         self.bothGrabTask = QPushButton("Get both balances and streaks")
         self.singleGrabTask = QPushButton("Get a single channel's balance and streak")
+        self.skipToBrowser = QPushButton("Skip to browser view")
         # adds the buttons to determine task
 
         self.pointGrabTask.setMinimumSize(250, 40)
         self.streakGrabTask.setMinimumSize(250, 40)
         self.bothGrabTask.setMinimumSize(250, 40)
         self.singleGrabTask.setMinimumSize(250, 40)
+        self.skipToBrowser.setMinimumSize(250, 40)
         # sets the sizes of the buttons
 
         self.taskLayout.addWidget(self.pointGrabTask, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.taskLayout.addWidget(self.streakGrabTask, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.taskLayout.addWidget(self.bothGrabTask, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.taskLayout.addWidget(self.singleGrabTask, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.skipToBrowser, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds all the buttons to layout
 
         try:
@@ -651,20 +656,21 @@ class starterWindow(QMainWindow):
             # does nothing
 
         self.taskLayout.addItem(self.taskLayoutTopSpacer, 0, 0)
-        self.taskLayout.addItem(self.taskLayoutBotSpacer, 5, 0)
+        self.taskLayout.addItem(self.taskLayoutBotSpacer, 6, 0)
         # adds the spacers to layout (above and below selections, to squish them a bit
 
         self.pointGrabTask.clicked.connect(lambda: self.taskChooser("Channel Point Balances", 1))
         self.streakGrabTask.clicked.connect(lambda: self.taskChooser("Active Streaks", 2))
         self.bothGrabTask.clicked.connect(lambda: self.taskChooser("Balances and Streaks", 3))
         self.singleGrabTask.clicked.connect(lambda: self.taskChooser("Single Channel", 4))
+        self.skipToBrowser.clicked.connect(lambda: self.taskChooser("Skip to Browser", 5))
         # calls the task chooser to queue the task(s)
 
 ### Task Selection -> Task Queue ###
 
     def taskChooser(self, task: str, taskNum: int):
         """Function to set the tasks to run based on chosen task(s)"""
-        global enablePoints, enableStreaks
+        global enablePoints, enableStreaks, browserOnly
         # global -> local
         try:
         # tries to delete previous elements
@@ -672,6 +678,7 @@ class starterWindow(QMainWindow):
             self.streakGrabTask.deleteLater()
             self.bothGrabTask.deleteLater()
             self.singleGrabTask.deleteLater()
+            self.skipToBrowser.deleteLater()
             # removes/deletes the previous elements
         except:
         # if the deletion fails (shouldn't, but better than crashing)
@@ -739,6 +746,15 @@ class starterWindow(QMainWindow):
             self.taskSingleSubmitButton.clicked.connect(lambda: self.taskRunner(4, self.taskSingleChannelName.text()))
             # runs the task with command 4 and the channel name field's text
 
+        elif taskNum == 5:
+        # if it's 5 (skips to browser for login management)
+            self.labelSwap.emit("Opening browser view...")
+            # user inform
+            browserOnly = True
+            # sets the global boolean to True (tells the later functions to not run logic)
+            QTimer.singleShot(1500, self.taskRunner)
+            # calls taskRunner after 1.5s
+
     def returnToConfigChooser(self):
         """Function to return back to the config selection screen"""
         try:
@@ -753,7 +769,7 @@ class starterWindow(QMainWindow):
         self.taskChooserConfig()
         # calls the task chooser config again (goes back)
     
-    def taskRunner(self, task: int, channel:str=None):
+    def taskRunner(self, task:int=None, channel:str=None):
         """Function to run the selected task"""
         global overrideChannel, canRun
         # global -> local
@@ -927,8 +943,14 @@ class tepgWindow(QMainWindow):
         self.browserView.setUrl(QUrl(self.defaultURL))
         # sets "default" url to open (twitch.tv)
 
-        self.browserView.loadFinished.connect(self.extractAuthToken)
-        # calls the auth grab when the page is done loading
+        if not browserOnly:
+        # if the browser-only mode isn't enabled
+            self.browserView.loadFinished.connect(self.extractAuthToken)
+            # calls the auth grab when the page is done loading
+        else:
+        # if the browser-only mode *is* enabled
+            self.browserWindow(False)
+            # calls the browser window with False (forces full window size and shows it)
         self.browserShow.connect(self.browserWindow)
         # calls browserWindow when the status is determined
         self.authValid.connect(self.pwpgd)
@@ -940,7 +962,7 @@ class tepgWindow(QMainWindow):
 
     def browserWindow(self, status: bool):
         """A function to determine if the browser view should appear or not"""
-        if status:
+        if status and not browserOnly:
         # if the status is True (meaning the auth token is all good and the browser isn't needed)
             self.browserView.hide()
             # hides the whole browser view
@@ -1144,7 +1166,6 @@ class tepgWindow(QMainWindow):
             self.progressBar.setValue(100)
             # sets the progress bar value
 
-
     def progressDone(self, errors: int, streak: int):
         """A function to change the headless UI into completion mode"""
         preFinalText = self.totalLabel.text()
@@ -1173,7 +1194,6 @@ class tepgWindow(QMainWindow):
         self.currentLabel.hide()
         # hides the index number
 
-
 ### Window Size Manager ###
 
     def sizeCalculator(self, X: int = None, Y: int = None) -> None:
@@ -1195,7 +1215,6 @@ class tepgWindow(QMainWindow):
             self.windowSizeY = int(app.primaryScreen().size().height() / 1.5)
             # base window sizes (~66% of the main monitor's width and height)
 
-
 ### UI Style Picker ###
 
     def uiStyle(self):
@@ -1215,7 +1234,6 @@ class tepgWindow(QMainWindow):
 
         QTimer.singleShot(3000, self.startPointWorker)
         # calls the point manager to start getting points
-
 
 ### Auth Token Grabber ###
 
@@ -1271,8 +1289,7 @@ class tepgWindow(QMainWindow):
         QTimer.singleShot(5000, self.authValidCheck)
         # waits 5 seconds, then calls the valid checker
 
-
-    ### Auth Validity Check ###
+### Auth Validity Check ###
 
     def authValidCheck(self):
         """Function to ensure the auth token is valid"""
@@ -1301,8 +1318,7 @@ class tepgWindow(QMainWindow):
             self.browserShow.emit(False)
             # tells browserShow to show the window
 
-
-    ### Channel Lister ###
+### Channel Lister ###
 
     def getChannelList(self) -> list:
         """The function to grab the list of channels"""
@@ -1333,8 +1349,7 @@ class tepgWindow(QMainWindow):
         return self.channels
         # returns the list of channels to caller
 
-
-    ### Worker Starter ###
+### Worker Starter ###
 
     def startPointWorker(self):
     # a starter for the point worker
@@ -1630,10 +1645,10 @@ class PointWorker(QObject):
                     self.totalPoints = "Not checked"
                     # sets the points to nothing
 
-                if enableStreaks:
+                if self.enableStreaks:
                 # if the streak-grabbing is enabled
 
-                    if enablePoints:
+                    if self.enablePoints:
                     # if points and streaks are enabled, slows down the process a bit more
                         QThread.msleep(1000)
                         # sleeps for a second (avoids limiting)

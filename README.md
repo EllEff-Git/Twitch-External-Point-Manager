@@ -1,5 +1,5 @@
 ## Twitch Exact Point Grab *(TEPG)* 
-### A lightweight, Python program to get your current channel points for any and all channels desired.
+### A lightweight Python program to get your current channel points for any and all channels desired.
 
 
 #### Runs through the Twitch GraphQL to grab the points balance <br>
@@ -37,9 +37,5 @@
 #### Login to Twitch in the built-in browser view
 #### Close TEPG
 #### Add desired channels into the Channel List.txt file (one per line, not case sensitive, must match name grammatically)
-#### Optionally, add channels and their channel IDs into the Streak List.json to capture their streak counts
-* To add a new channel to Streak List.json, you'll need the channel's ID
-    * Can be found via 3rd party tools/sites (such as Chatterino or streamweasels.com or streamcharts.com, etc) 
-    * Alternatively found by navigating to a similar location as the Client ID and looking for Channel ID inside the "Response" tab, rather than the "Headers" (inside the channel's webpage console)
-    * There's an example included in the file, but the syntax is "channel": channelID, make sure to add a comma for every new entry
-    * Make sure the "enableStreaks" is set to true, otherwise will not capture any streaks (default behavior)
+#### Configure via the starter UI that pops up every run
+##### Can be used to disable streak-checking and can be set to automatically capture >1 streaks to the streak list for later checking
