@@ -3,4 +3,13 @@ Channel Points.csv
 Channel List.txt
 todo.txt
 Data/*
+Test/*
+TEPG.spec
+TEPG.exe
+tepgIcon.png
+resources.qrc
+build/*
+dist/*
+Release/*
 !.gitignore
+icons/*

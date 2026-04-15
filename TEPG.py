@@ -1,5 +1,7 @@
-import os, sys, requests, datetime, json, time
+import os, sys, requests, datetime, json, re
 # Required program management
+#import resfile
+# Resource file that contains the executable icon
 import pandas as pnd
 # Soft required for CSV management (not required, but improves formatting)
 from PyQt6.QtCore import *
@@ -10,19 +12,26 @@ from PyQt6.QtWidgets import *
 # PyQt is the application/window framework (UI for the whole app)
 
 
-tepgVer = "0.4.12.2246"
+tepgVer = "0.4.15.0318"
 """TEPG program version (Y.MM.DD.HHMM)"""
 
 
-if getattr(sys, "frozen", False):
-    # since the program bundled with pyInstaller, it's "frozen"
-    directory = os.path.dirname(sys.executable)
-    """The base directory of the program, where tepg.exe resides"""
-else:
-    # if somehow not in a bundled (frozen) state
-    directory = os.path.dirname(__file__)
-    """The base directory of the program, where tepg.exe resides"""
 
+directory = None
+"""The base directory of the program, where TEPG.exe resides"""
+iconPath = None
+"""The path of the app icon png"""
+
+if getattr(sys, "frozen", False):
+# since the program bundled with pyInstaller, it's "frozen"
+    directory = os.path.dirname(sys.executable)
+    iconPath = os.path.join(sys._MEIPASS, "tepgIcon.png")
+    # reassigns the path variables accordingly
+else:
+# if somehow not in a bundled (frozen) state
+    directory = os.path.dirname(__file__)
+    iconPath = os.path.join(directory, "tepgIcon.png")
+    # reassigns the path variables accordingly
 
 profilePath = os.path.join(directory, "Data", "Profile")
 """The user profile path"""
@@ -36,22 +45,24 @@ streakMapPath = os.path.join(directory, "Streak List.json")
 """The streak map json file path"""
 
 
-if not os.path.exists(profilePath):
-# checks if the profile folder path is(n't) valid yet
-    print("No Profile folder found, creating one!")
-    # user inform
-    os.mkdir(profilePath)
-    # makes a directory at the given path
-
-
-if not os.path.exists(textPath):
-# checks if the channel list.txt file exists yet
-    print("No Channel List text file found, creating one!")
-    # user inform
-    with open(textPath, "w") as clnt:
-    # opens the text path location (makes a new file)
-        clnt.write("Twitch")
-        # writes just Twitch as the only channel
+profileName = None
+"""The user profile (folder) name"""
+clientID = None
+"""The client ID, stored in clientID.txt"""
+enableStreaks = False
+"""The boolean for streak checking"""
+autoAddStreaks = False
+"""The boolean for adding streaks automatically"""
+enablePoints = True
+"""The boolean for point checking"""
+enableErrorLog = False
+"""The boolean for error storing in CSV"""
+streakMap = {}
+"""The map that holds all the streak list information"""
+overrideChannel = None
+"""The single channel name, if using single channel"""
+canRun = False
+"""Boolean that determines if the main window can start (True after first window completes)"""
 
 
 def folders(path):
@@ -64,89 +75,733 @@ def folders(path):
             # joins and goes to next
 
 
-subfolders = list(folders(profilePath))
-# stores the subfolders of the profile path (installation/Profile/)
+### Starter Window UI ###
 
+class starterWindow(QMainWindow):
+    """A class for the first window that pops up"""
 
-if subfolders and len(subfolders) == 1:
-    # checks if there's a subfolder inside the Profile (whether an actual user profile exists or not)
-    profileFolder = subfolders[0]
-    # grabs the only subfolder
-    head, tail = os.path.split(profileFolder)
-    # splits the path of the folder into head (everything before last /) and tail (the last part)
-    profileName = tail
-    # sets the profile name to match the folder name
-elif len(subfolders) > 1:
-    # if there's more than 1 profile folder
-    print("Found multiple folders inside the TEPG/Profile/ folder - ensure only one user profile folder is present and retry")
-    time.sleep(300)
-    # waits 5 min (ensure user sees)
-    raise SystemExit
-    # exit
-else:
-    # if there's no profile subfolder yet
-    chooseUser = input("No profile configured, please enter a new profile name: ")
-    # prompts user to pick a name
-    if not chooseUser: # need to also make it check for stuff like it's only A-Z/a-z I think? I guess it could also have numbers? Anything the folder can conform to, I think?
-    # if user fails to give one
-        print("No valid name given, setting profile to default")
+    labelSwap = pyqtSignal(str)
+    # a pyQt signal to swap the label
+
+    def __init__(self):
+        super().__init__()
+
+    ### Init / Basic ###
+
+        self.show()
+        # shows the program window (Windows hides by default)
+
+        self.version = tepgVer
+        # stores the version in self
+
+        self.mainIcon = iconPath
+        # the program's main icon
+        self.programName = f"TEPG Starter v{self.version}"
+        # stores the program name
+
+        self.windowSizeX = max(1000, int(startApp.primaryScreen().size().width() / 3))
+        self.windowSizeY = max(600, int(startApp.primaryScreen().size().height() / 3))
+        # base window sizes (min of 1000 pixels ~33% of the main monitor's width and height)
+
+    ### Basic Window Setup ###
+
+        self.setWindowTitle(self.programName)
+        # the window title
+        self.setWindowIcon(QIcon(self.mainIcon))
+        # the window icon
+        self.setMinimumSize(QSize(self.windowSizeX, self.windowSizeY))
+        # the window size
+
+    ### UI Elements ###
+
+        self.container = QWidget()
+        # a container to hold elements
+        self.mainLayout = QGridLayout()
+        # new grid layout to put elements into
+        self.mainLayout.setSpacing(20)
+        # sets spacing of 20px to each
+
+        self.mainLayout.setRowMinimumHeight(0, 50)
+        self.mainLayout.setRowMinimumHeight(1, 50)
+        self.mainLayout.setRowMinimumHeight(2, 100)
+        self.mainLayout.setRowMinimumHeight(3, 50)
+        self.mainLayout.setRowMinimumHeight(4, 50)
+        # sets the minimum height for rows
+
+        self.mainLayout.setColumnMinimumWidth(0, 100)
+        self.mainLayout.setColumnMinimumWidth(1, 200)
+        self.mainLayout.setColumnMinimumWidth(2, 300)
+        self.mainLayout.setColumnMinimumWidth(3, 200)
+        self.mainLayout.setColumnMinimumWidth(4, 100)
+        # sets the minimum width for columns
+
+        self.mainLayout.setColumnStretch(0, 0)
+        self.mainLayout.setColumnStretch(1, 1)
+        self.mainLayout.setColumnStretch(3, 1)
+        self.mainLayout.setColumnStretch(4, 0)
+        self.mainLayout.setColumnStretch(2, 1)
+        # allows columns 1, 2 and 3 (center) to stretch
+        self.mainLayout.setRowStretch(2, 1)
+        # allows row 2 (center) to stretch
+
+        self.container.setLayout(self.mainLayout)
+        # sets the container to use layout
+
+        self.mainLabel = QLabel()
+        # a label to hold the main information about current process
+        self.mainLabel.setText("TEPG starter window")
+        # initial text
+        self.mainLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the label
+        self.mainLabel.setWordWrap(True)
+        # makes the text wrap if it's too big
+        self.mainLabel.setFixedSize(300, 50)
+        # tells the label to prefer the main layout's size
+        self.mainLayout.addWidget(self.mainLabel, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the label to the main layout (should be top, always)
+
+    ### Hideable/Showable Elements ###
+
+        self.userInputField = QLineEdit()
+        # creates a new QLineEdit for user to input into
+        self.userInputField.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # alings to center
+        self.userInputField.setFixedSize(300, 30)
+        # sets size
+        self.mainLayout.addWidget(self.userInputField, 2, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the qline to layout (row 1, col 0)
+        self.userInputField.hide()
+        # hides by default
+
+    ### Intermediary ###
+
+        self.setCentralWidget(self.container)
+        # sets the container to fill the window
+        self.labelSwap.connect(self.changeLabel)
+        # connects the label swap signal to the change label function
+        self.firstTimeUI()
+        # runs the first time UI checker to see if the first time UI should appear or not
+
+### Label Changer ###
+
+    def changeLabel(self, text: str):
+        """Function to change the passed label"""
+        self.mainLabel.setText(text)
+        # sets the passed label's text to the passed text string
+
+### First Time UI ###
+
+    def firstTimeUI(self):
+        """Function to determine if the first time UI should be shown"""
+        global profileName
+        # global -> local (this gets set here if the folder already exists)
+
+        if not os.path.exists(profilePath):
+        # checks if the profile folder path is(n't) valid yet
+            self.labelSwap.emit("No Profile folder found, creating one!")
+            # user inform
+            os.mkdir(profilePath)
+            # makes a directory at the given path
+
+        if not os.path.exists(textPath):
+        # checks if the channel list.txt file exists yet
+            self.labelSwap.emit("No Channel List text file found, creating default!")
+            # user inform
+            with open(textPath, "w") as clnt:
+            # opens the text path location (makes a new file)
+                clnt.write(f"Twitch\n"
+                           f"TwitchRivals")
+                # writes just Twitch and Twitch Rivals as the only channels (shows how the list works, 100% functional channels)
+
+    ### User Profile Check ###
+
+        self.subfolders = list(folders(profilePath))
+        # stores the subfolders of the profile path (installation/Profile/)
+
+        if self.subfolders and len(self.subfolders) == 1:
+        # checks if there's a subfolder inside the Profile (whether an actual user profile exists or not)
+            profileFolder = self.subfolders[0]
+            # grabs the only subfolder
+            head, tail = os.path.split(profileFolder)
+            # splits the path of the folder into head (everything before last /) and tail (the last part)
+            profileName = tail
+            # sets the profile name to match the folder name
+            self.labelSwap.emit(f"Found profile: {profileName}!")
+            # user inform
+            QTimer.singleShot(1500, self.clientIDCheck)
+            # moves straight to client ID check
+
+        elif len(self.subfolders) > 1:
+        # if there's more than 1 profile folder
+            self.labelSwap.emit("Found multiple folders inside the TEPG/Profile/ folder!\nPlease ensure only one user profile folder is present and retry")
+            # sets the text to inform
+            return
+            # stops the checks
+
+        else:
+        # if there's no profile subfolder yet
+            self.labelSwap.emit("No profile configured, please enter a new profile name:\nThis is purely cosmetic")
+            # swaps the label
+            self.userInputField.setPlaceholderText("Default")
+            # sets the default text
+            self.userInputField.show()
+            # unhides the text input element
+
+            self.usernameButton = QPushButton("Submit")
+            # makes a new button to save the name
+            self.usernameButton.setFixedSize(100, 50)
+            # sets size
+            self.mainLayout.addWidget(self.usernameButton, 2, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+            # adds the button to layout (row 2, col 3)
+
+            self.usernameButton.clicked.connect(self.userNameGrab)
+            # on click, calls the next part
+
+### User Profile Name ###
+
+    def userNameGrab(self):
+        """Function to grab the user profile folder"""
+        global profileName
+        # global -> local (set if none exists)
+            
+        self.chooseUsername = self.userInputField.text()
+        # stores the username from the input field
+        
+        if self.chooseUsername.strip() == "":
+        # if user fails to give one
+            self.labelSwap.emit("No (valid) name given, setting profile to Default\nTo change this, delete or rename the folder inside /Profile/")
+            # user inform
+            profileName = "Default"
+            # sets to Default
+            waitTimer = 4000
+            # sets the wait timer to 4000 ms, to allow user to read it
+        else:
+        # if user provides a name
+            self.labelSwap.emit(f"Setting profile name to {self.chooseUsername}")
+            # user inform
+            profileName = self.chooseUsername
+            # stores the profile name as the chosen name
+            waitTimer = 2000
+            # sets the wait timer to 2000 ms, shorter text with no instructions
+
+        self.usernameButton.deleteLater()
+        # deletes the username button
+        self.mainLayout.removeWidget(self.usernameButton)
+        # removes the button from the layout
+        self.userInputField.hide()
+        # hides the input field
+        self.userInputField.setText("")
+        # empties the text
+
+        QTimer.singleShot(waitTimer, self.userNameIntermediary)
+        # waits 3s, then calls intermediary function
+
+    def userNameIntermediary(self):
+        """Function to slow down the UI (better UX)"""
+
+        self.labelSwap.emit("Getting Client ID...")
         # user inform
-        profileName = "Default"
-        # sets to Default
-    else:
-    # if user provides a name
-        print(f"Setting profile name to {chooseUser}")
-        # user inform
-        profileName = chooseUser
-        # stores the profile name as the chosen name
+        QTimer.singleShot(1500, self.clientIDCheck)
+        # calls the next stage
+
+### Client ID Grab ###
+
+    def clientIDCheck(self):
+        """Function to grab the client ID"""
+        global clientID
+        # global -> local
+
+        clientIDFail = False
+        # defaults the failure to false
+
+        if os.path.exists(clientIDPath):
+        # if the client ID file exists
+            try:
+            # tries to get the ID
+                with open(clientIDPath, "r") as clnt:
+                # opens the client id text file
+                    clientIDraw = clnt.readline()
+                    # reads the line
+                    trash, clientID = clientIDraw.split("= ")
+                    # splits by "= " presence
+                    clientID = clientID.strip()
+                    # ensures no whitespace
+            except:
+            # if it can't get the ID
+                clientIDFail = True
+                # sets the boolean to True
+        else:
+        # if the file doesn't exist
+            clientIDFail = True
+            # sets the boolean to True
+
+        if clientIDFail:
+        # if the file doesn't exist or there's an error
+            self.labelSwap.emit("No Client ID found!\nPlease enter your Twitch Client ID:")
+            # changes the text to inform
+            self.userInputField.setPlaceholderText("30-character ID")
+            # sets the base text
+            self.userInputField.show()
+            # unhides the input field
+
+            self.clientIDButton = QPushButton("Submit")
+            # makes a new button to save the name
+            self.clientIDButton.setFixedSize(60, 35)
+            # sets size
+            self.mainLayout.addWidget(self.clientIDButton, 2, 3, alignment=Qt.AlignmentFlag.AlignLeft)
+            # adds the button to layout (row 2, col 3)
+
+            self.clientIDinvalidText = QLabel("")
+            # error text (makes empty by default)
+            self.clientIDinvalidText.setAlignment(
+                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+            )
+            # sets alignment to top-center of the slot
+            self.clientIDinvalidText.setFixedSize(300, 50)
+            # sets a fixed size (helps with spacing)
+            self.mainLayout.addWidget(self.clientIDinvalidText, 3, 2, alignment=Qt.AlignmentFlag.AlignTop)
+            # adds the widget under the text input field
+
+            self.clientIDButton.clicked.connect(self.clientIDVerify)
+            # on click, calls the next part
+        else:
+        # if the file opens just fine with no error
+            self.configWindow()
+            # moves to the config window right away
+
+### Client ID "Validation" ###
+
+    def clientIDVerify(self):
+        """Function that ensures the client ID is 'valid' (fits regEx criteria)"""
+        tempID = self.userInputField.text()
+        # stores the ID
+        
+        if bool(re.fullmatch(r"[A-Za-z0-9]{30}", tempID)):
+        # if the ID matches regular expression with length = 30 and normal letters/numbers, it's more than likely valid
+            self.clientIDinvalidText.deleteLater()
+            # fully deletes the ID invalid text
+            self.clientIDSaver()
+            # calls the ID saver, because the ID is likely valid
+        else:
+        # if the ID isn't valid (doesn't match regEx)
+            self.clientIDinvalidText.setText("Client ID is not valid, please enter a valid Twitch Client ID")
+            # shows the invalid text
+
+### Client ID Save ###
+
+    def clientIDSaver(self):
+        """Function that saves the client ID if one is not set yet"""
+        global clientID
+        # global -> local
+            
+        clientID = self.userInputField.text()
+        # takes the client ID from user input
+
+        with open(clientIDPath, "w") as clnt:
+        # opens the client ID location (makes a new file)
+            clnt.write(f"Client ID = {clientID}")
+            # writes the client ID string to file
+
+        self.clientIDButton.deleteLater()
+        # deletes the button
+        self.mainLayout.removeWidget(self.clientIDButton)
+        # removes the button
+        self.userInputField.deleteLater()
+        # removes the input field
+
+        self.configWindow()
+        # calls the config window next, since all tasks are done for first popup
+
+### Configuration Window
+
+    def configWindow(self):
+        """Function to show the configuration window"""
+        global streakMap, enableErrorLog, enableStreaks, autoAddStreaks
+        # global -> local
+
+        self.configLayout = QGridLayout()
+        # creates a layout just for the config file
+
+        self.mainLayout.addLayout(self.configLayout, 2, 1, 2, 3)
+        # adds the config layout to the center of the doc (spans from 2x1 to 3x3)
+
+        if os.path.exists(streakMapPath):
+        # if the client ID file exists
+            with open(streakMapPath, "r") as strk:
+            # opens the client id text file
+                streakMap = json.load(strk)
+                # loads the json map into variable
+            try:
+            # tries to get the values
+                enableStreaks = streakMap["enableStreaks"]
+                # grabs the boolean from the map
+                enableErrorLog = streakMap["enableErrorsInCSV"]
+                # gets the boolean for error logging
+                autoAddStreaks = streakMap["autoAddStreaks"]
+                # gets the boolean for auto-adding streaks
+            except:
+            # if the value grab fails
+                self.labelSwap.emit("Error reading the config file, please re-configure")
+                # user inform
+                QTimer.singleShot(3000, self.prepConfig)
+                # calls the modifyConfig after a couple seconds
+
+            self.labelSwap.emit("Would you like to change your options or keep current configuration?")
+            # changes label to prompt next stage
+
+            self.configWindowKeep = QPushButton("Keep")
+            self.configWindowModify = QPushButton("Modify")
+            # adds buttons to move to next task
+
+            self.configWindowKeep.setFixedSize(100, 50)
+            self.configWindowModify.setFixedSize(100, 50)
+            # sets sizes
+
+            self.configLayout.addWidget(self.configWindowKeep, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+            self.configLayout.addWidget(self.configWindowModify, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+            # adds the buttons to layout
+
+            self.configWindowKeep.clicked.connect(self.taskChooserConfig)
+            # connects the no to move on to task choosing
+            self.configWindowModify.clicked.connect(self.prepConfig)
+            # connects the yes to move to the modifyConfig
+
+        else:
+        # if the file doesn't exist
+            self.prepConfig()
+            # calls the modifyConfig to set options
+
+### Configuration Selection ###
+
+    def prepConfig(self):
+        """Function to prepare for the configuration modification"""
+        
+        try:
+        # tries to remove the buttons (they might not exist, if the streak config file doesn't exist yet)
+            self.configWindowKeep.deleteLater()
+            self.configWindowModify.deleteLater()
+            # removes the buttons
+        except:
+        # if they don't exist
+            None
+            # does nothing
+
+        self.labelSwap.emit("Select the options to use, please")
+        # changes the main label
+        
+        self.enableStreakCheckbox = QCheckBox("Check channels' streaks")
+        # adds a checkbox for enableStreak
+        self.autoAddStreaksCheckbox = QCheckBox("Automatically add streaks")
+        # adds a checkbox for autoAddStreaks
+        self.enableCSVErrorsCheckbox = QCheckBox("Enable error storing in CSV")
+        # adds a checkbox for enableErrorLog
+
+        self.enableStreakText = QLabel("Whether to grab current streak information along with the points")
+        self.autoAddStreakText = QLabel("Whether to automatically add channels into the streak list, if they have an active streak")
+        self.enableCSVErrorsText = QLabel("Whether to add any point grab errors into CSV")
+        # adds tooltips for all 3
+
+        self.enableStreakCheckbox.setChecked(enableStreaks)
+        self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
+        self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
+        # sets the check status based on the stored booleans (false by default)
+
+        self.enableStreakText.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        )
+        self.autoAddStreakText.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        )
+        self.enableCSVErrorsText.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        )
+        # centers all 3 text fields to the top of their slots
+
+        self.configLayout.addWidget(self.enableStreakCheckbox, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.autoAddStreaksCheckbox, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds checkboxes to layout
+
+        self.configLayout.addWidget(self.enableStreakText, 2, 0)
+        self.configLayout.addWidget(self.autoAddStreakText, 4, 0)
+        self.configLayout.addWidget(self.enableCSVErrorsText, 6, 0)
+
+        self.configLayoutTopSpacer = QSpacerItem(50, 50)
+        self.configLayoutBotSpacer = QSpacerItem(50, 50)
+        # adds layout spacers
+
+        self.configLayout.addItem(self.configLayoutTopSpacer, 0, 0)
+        self.configLayout.addItem(self.configLayoutBotSpacer, 7, 0)
+        # adds the spacers to layout
+
+        self.configPrepDoneButton = QPushButton("Done")
+        # adds a button to submit the config
+        self.configPrepDoneButton.setFixedSize(100, 50)
+        # sets size
+        self.mainLayout.addWidget(self.configPrepDoneButton, 4, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to layout
+
+        self.configPrepDoneButton.clicked.connect(self.modifyConfigText)
+        # done -> modify config
+
+### Modify Configuration ###
+
+    def modifyConfigText(self):
+        """Function to just set the text with a delay"""
+
+        self.enableStreakCheckbox.hide()
+        self.autoAddStreaksCheckbox.hide()
+        self.enableCSVErrorsCheckbox.hide()
+        # hides the checkboxes
+        self.enableStreakText.deleteLater()
+        self.autoAddStreakText.deleteLater()
+        self.enableCSVErrorsText.deleteLater()
+        # deletes the texts
+        self.mainLayout.removeWidget(self.configPrepDoneButton)
+        # removes/hides all the previous widgets from the screen
+
+        self.configPrepDoneButton.deleteLater()
+        # deletes the widgets
+
+        self.labelSwap.emit("Modifying configuration...")
+        # sets new text
+        QTimer.singleShot(1500, self.modifyConfig)
+        # calls modifyConfig 2 seconds later
+    
+    def modifyConfig(self):
+        """The function that actually modifies the config"""
+        global enableErrorLog, enableStreaks, streakMap, autoAddStreaks
+        # global -> local
+
+        streakMap["enableStreaks"] = self.enableStreakCheckbox.isChecked()
+        streakMap["autoAddStreaks"] = self.autoAddStreaksCheckbox.isChecked()
+        streakMap["enableErrorsInCSV"] = self.enableCSVErrorsCheckbox.isChecked()
+        streakMap["exampleChannel"] = "exampleChannelID"
+        # adds map settings
+
+        enableStreaks = self.enableStreakCheckbox.isChecked()
+        autoAddStreaks = self.autoAddStreaksCheckbox.isChecked()
+        enableErrorLog = self.enableCSVErrorsCheckbox.isChecked()
+        # sets the global booleans based on the checkbox values
+
+        self.enableStreakCheckbox.deleteLater()
+        self.autoAddStreaksCheckbox.deleteLater()
+        self.enableCSVErrorsCheckbox.deleteLater()
+        # deletes the checkboxes from memory after they've been checked
+
+        with open(streakMapPath, "w") as strk:
+        # opens the streak config location (or makes a new file)
+            json.dump(streakMap, strk, indent=3)
+            # dumps the map into file
+
+        self.labelSwap.emit("Configuration modified...")
+        # changes label
+
+        QTimer.singleShot(3000, self.taskChooserConfig)
+        # runs the task chooser config
+
+### Task Selection ###
+
+    def taskChooserConfig(self):
+        """Function to select which tasks the program should perform"""
+        try:
+            self.configWindowKeep.deleteLater()
+            self.configWindowModify.deleteLater()
+            # deletes the elements used in config (keep and modify)
+            self.configLayout.deleteLater()
+            # deletes the layout used in the config stage
+        except Exception as err:
+            print(f"uh-oh: {err}")
+
+        self.labelSwap.emit("Please select a task to perform:")
+        # swaps main label
+
+        self.taskLayout = QGridLayout()
+        # creates a new layout for the tasks to use
+
+        self.mainLayout.addLayout(self.taskLayout, 2, 1, 2, 3)
+        # adds the config layout to the center of the doc (spans from 2x1 to 3x3)
+
+        self.pointGrabTask = QPushButton("Get channel point balances")
+        self.streakGrabTask = QPushButton("Get active streaks")
+        self.bothGrabTask = QPushButton("Get both balances and streaks")
+        self.singleGrabTask = QPushButton("Get a single channel's balance and streak")
+        # adds the buttons to determine task
+
+        self.pointGrabTask.setMinimumSize(250, 40)
+        self.streakGrabTask.setMinimumSize(250, 40)
+        self.bothGrabTask.setMinimumSize(250, 40)
+        self.singleGrabTask.setMinimumSize(250, 40)
+        # sets the sizes of the buttons
+
+        self.taskLayout.addWidget(self.pointGrabTask, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.streakGrabTask, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.bothGrabTask, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.singleGrabTask, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all the buttons to layout
+
+        try:
+        # tries to add the spacers (may already exist)
+            self.taskLayoutTopSpacer = QSpacerItem(50, 50)
+            self.taskLayoutBotSpacer = QSpacerItem(50, 100)
+            # adds a top and bottom spacer
+        except:
+        # if it can't (they likely already exist)
+            None
+            # does nothing
+
+        self.taskLayout.addItem(self.taskLayoutTopSpacer, 0, 0)
+        self.taskLayout.addItem(self.taskLayoutBotSpacer, 5, 0)
+        # adds the spacers to layout (above and below selections, to squish them a bit
+
+        self.pointGrabTask.clicked.connect(lambda: self.taskChooser("Channel Point Balances", 1))
+        self.streakGrabTask.clicked.connect(lambda: self.taskChooser("Active Streaks", 2))
+        self.bothGrabTask.clicked.connect(lambda: self.taskChooser("Balances and Streaks", 3))
+        self.singleGrabTask.clicked.connect(lambda: self.taskChooser("Single Channel", 4))
+        # calls the task chooser to queue the task(s)
+
+### Task Selection -> Task Queue ###
+
+    def taskChooser(self, task: str, taskNum: int):
+        """Function to set the tasks to run based on chosen task(s)"""
+        global enablePoints, enableStreaks
+        # global -> local
+        try:
+        # tries to delete previous elements
+            self.pointGrabTask.deleteLater()
+            self.streakGrabTask.deleteLater()
+            self.bothGrabTask.deleteLater()
+            self.singleGrabTask.deleteLater()
+            # removes/deletes the previous elements
+        except:
+        # if the deletion fails (shouldn't, but better than crashing)
+            None
+            # does nothing
+
+        self.labelSwap.emit(f"Selected task:\n{task}")
+        # swaps the main label
+
+        if taskNum == 1:
+        # task 1 is channel points
+            enableStreaks = False
+            # ensures the streaks are disabled (points-only)
+            self.taskRunner(1)
+            # runs the task runner with command 1
+
+        elif taskNum == 2:
+        # task 2 is streaks
+            enablePoints = False
+            # disables point-grabbing (streak-only)
+            self.taskRunner(2)
+            # runs the task runner with command 2
+
+        elif taskNum == 3:
+        # task 3 is both
+            enablePoints = enableStreaks = True
+            # sets both to True
+            self.taskRunner(3)
+            # runs the task runner with command 3
+
+        elif taskNum == 4:
+        # task 4 is a single channel
+            self.labelSwap.emit("Please enter a single channel:")
+            # swap label
+            
+            self.taskSingleBackButton = QPushButton("Back")
+            # back button, in case single channel was not the intended
+            self.taskSingleBackButton.setMinimumSize(100, 50)
+            # sets minimum size
+
+            self.taskSingleSubmitButton = QPushButton("Submit")
+            # submit button to enter channel
+            self.taskSingleSubmitButton.setMinimumSize(100, 50)
+            # sets minimum size
+
+            self.taskSingleLayout = QGridLayout()
+            # creates a new layout for the buttons
+            self.taskLayout.addLayout(self.taskSingleLayout, 2, 0)
+            # adds the layout under the top spacer and text field, center (only) column
+
+            self.taskSingleChannelName = QLineEdit()
+            # a user input field for the channel name
+            self.taskSingleChannelName.setPlaceholderText("Channel name")
+            # adds a placeholder (background) text
+            self.taskSingleChannelName.setMinimumSize(250, 30)
+            # sets minimum size
+
+            self.taskSingleLayout.addWidget(self.taskSingleSubmitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+            self.taskSingleLayout.addWidget(self.taskSingleBackButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            self.taskLayout.addWidget(self.taskSingleChannelName, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+            # adds the items to layout
+
+            self.taskSingleBackButton.clicked.connect(self.returnToConfigChooser)
+            # calls the chooser config caller
+            self.taskSingleSubmitButton.clicked.connect(lambda: self.taskRunner(4, self.taskSingleChannelName.text()))
+            # runs the task with command 4 and the channel name field's text
+
+    def returnToConfigChooser(self):
+        """Function to return back to the config selection screen"""
+        try:
+            self.taskSingleBackButton.deleteLater()
+            self.taskSingleSubmitButton.deleteLater()
+            # deletes both buttons
+            self.taskSingleChannelName.deleteLater()
+            # deletes the text field
+        except:
+            None
+        
+        self.taskChooserConfig()
+        # calls the task chooser config again (goes back)
+    
+    def taskRunner(self, task: int, channel:str=None):
+        """Function to run the selected task"""
+        global overrideChannel, canRun
+        # global -> local
+        try:
+        # tries to delete the buttons and such
+            self.taskSingleBackButton.deleteLater()
+            self.taskSingleSubmitButton.deleteLater()
+            # deletes both buttons
+            self.taskSingleChannelName.deleteLater()
+            # deletes the text field
+        except:
+        # if it can't
+            None
+            # does nothing
+
+        if task == 4:
+        # if the task is 4 (single channel)
+            overrideChannel = channel.strip()
+            # sets the override channel global variable to match the passed channel name
+
+        self.labelSwap.emit("Starting the main TEPG program...")
+        # swaps the label once more
+
+        canRun = True
+        # sets the "permission slip" for the next stage to True (allows next window)
+
+        QTimer.singleShot(2500, self.stopper)
+        # quits the starter application window with a small delay
+
+    def stopper(self):
+        """Function to call when a stop is needed (with a delay)"""
+        self.close()
+        # just closes the window
 
 
-if os.path.exists(clientIDPath):
-# if the client ID file exists
-    with open(clientIDPath, "r") as clnt:
-    # opens the client id text file
-        clientIDraw = clnt.readline()
-        # reads the line
-        trash, clientID = clientIDraw.split("= ")
-        # splits by = sign
-        clientID = clientID.strip()
-        # ensures no whitespace
-else:
-# if the file doesn't exist
-    clientID = input("Please enter a Twitch Client ID: ")
-    # takes the client ID from user input
-    with open(clientIDPath, "w") as clnt:
-    # opens the client ID location (makes a new file)
-        clnt.write(f"Client ID = {clientID}")
-        # writes the client ID string to file
+### Starter Startup ###
 
+startApp = QApplication(sys.argv)
+# base app instance (passes command line arguments)
+startWindow = starterWindow()
+# creates a window
+startApp.exec()
+# exceutes the app task (runs the QApplication)
 
-if os.path.exists(streakMapPath):
-# if the client ID file exists
-    with open(streakMapPath, "r") as strk:
-    # opens the client id text file
-        streakMap = json.load(strk)
-        # loads the json map into variable
-    enableStreaks = streakMap["enableStreaks"]
-    # grabs the boolean from the map
-else:
-# if the file doesn't exist
-    streakMap = {
-        "enableStreaks": False,
-        "exampleChannel": "exampleChannelID"
-    }
-    # creates a default map
-    enableStreaks = False
-    # sets the boolean to false
-    with open(streakMapPath, "w") as strk:
-    # opens the client ID location (makes a new file)
-        json.dump(streakMap, strk, indent=3)
-        # dumps the map into file
 
 
 reqSession = requests.Session()
 """A request session that stores cached request information"""
-
 
 os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-widevine --enable-gpu --enable-hls --disable-webgpu"
 # environment flags for the chromium webengine (directory stuff, ensures hardware acceleration is on)
@@ -160,14 +815,13 @@ class tepgWindow(QMainWindow):
     # creates a bool signal to check if the authentication code is ready
     taskText = pyqtSignal(str)
     # creates a string signal to set the task view to
+    browserShow = pyqtSignal(bool)
+    # creates a bool signal to check if the browser window should be shown, or a smaller preloader
 
     def __init__(self, state):
         super().__init__()
 
     ### Init / Basic ###
-
-        self.show()
-        # shows the program window (Windows hides by default)
 
         self.state = state
         # stores the app state that holds variables
@@ -183,6 +837,8 @@ class tepgWindow(QMainWindow):
         # stores the csv file path
         self.channelTxtPath = textPath
         # stores the channels path
+        self.overrideChannel = overrideChannel
+        # stores the potential override channel
         self.channels = self.getChannelList()
         # stores the channels
         self.channelLength = len(self.channels)
@@ -190,8 +846,10 @@ class tepgWindow(QMainWindow):
 
         self.authToken = None
         # the auth token
+        self.forceBrowserUI = False
+        # boolean on whether to force the browser to stay up
 
-        self.mainIcon = "icon.png"
+        self.mainIcon = iconPath
         # the program's main icon
         self.defaultURL = "https://twitch.tv"
         # stores the default URL to use when opening the app
@@ -213,7 +871,6 @@ class tepgWindow(QMainWindow):
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-
         self.setMinimumSize(QSize(self.windowSizeX, self.windowSizeY))
         # the window size 
 
@@ -223,28 +880,24 @@ class tepgWindow(QMainWindow):
         # creates a layout
         self.mainLayout.setSpacing(15)
         # sets spacing
-
         self.container = QWidget()
         # makes a container 
         self.container.setLayout(self.mainLayout)
         # sets the container to use the layout
-
         self.setCentralWidget(self.container)
         # sets the container to the middle
 
     ### Tooltip / Task View ###
 
-        self.taskView = QLineEdit()
+        self.taskView = QLabel()
         # creates a line edit text field for the task progress
-        self.taskView.setReadOnly(True)
-        # sets to read only (user can't write)
         self.taskView.setText("Opening browser view...")
         # initial value
         self.taskView.setFixedSize(QSize(int(self.windowSizeX / 4), 25))
         # sets a fixed size (1/4th the window width, 25 px tall)
         self.taskView.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns to the center
-        self.mainLayout.addWidget(self.taskView, 0,0,1,1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addWidget(self.taskView, 0, 0, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to layout
 
     ### Browser ###
@@ -252,9 +905,9 @@ class tepgWindow(QMainWindow):
         self.browserProfile = QWebEngineProfile(self.profileName, self)
         # sets the browser profile to the given profile (default is Default)
         self.browserProfile.setCachePath(os.path.join(self.profilePath, self.profileName))
-        # sets the cache path ()
+        # sets the cache path (<drive>:/<installation>/Data/Profile/<profileName>/)
         self.browserPage = QWebEnginePage(self.browserProfile, self.browserView)
-        # browserProfile.setPersistentStoragePath("S:/Profile/Local State")
+        # creates the engine page with the profile and view parameters
         self.browserView.setPage(self.browserPage)
         # sets the page to use the given properties
         self.browserView.setFixedSize(self.windowSizeX - 20, self.windowSizeY - 45)
@@ -265,7 +918,7 @@ class tepgWindow(QMainWindow):
         self.settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
         # ensures local storage is enabled 
         self.settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
-        # allows plugins to function
+        # ensures plugins are allowed to function
         self.settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         # ensures javascript is enabled
 
@@ -276,11 +929,48 @@ class tepgWindow(QMainWindow):
 
         self.browserView.loadFinished.connect(self.extractAuthToken)
         # calls the auth grab when the page is done loading
-        self.authValid.connect(self.uiStyle)
-        # calls uistyle when the authvalid is set to True
+        self.browserShow.connect(self.browserWindow)
+        # calls browserWindow when the status is determined
+        self.authValid.connect(self.pwpgd)
+        # calls the delay function when the authvalid is set to True
         self.taskText.connect(self.manageTooltip)
         # calls manageTooltip when the task text changes
 
+### Browser Window UI ###
+
+    def browserWindow(self, status: bool):
+        """A function to determine if the browser view should appear or not"""
+        if status:
+        # if the status is True (meaning the auth token is all good and the browser isn't needed)
+            self.browserView.hide()
+            # hides the whole browser view
+            self.setMinimumSize(500, 300)
+            self.resize(500, 300)
+            # the window size
+        else:
+        # if the status is False (auth token not valid, need to log in or something)
+            self.setMinimumSize(QSize(self.windowSizeX, self.windowSizeY))
+            # resizes the window to "normal" size
+            self.browserView.show()
+            # shows the browser view
+            self.forceBrowserUI = True
+            # sets the boolean to True, so the browser doesn't go away
+
+        try:
+        # tries to show window (just in case it gets mad it's already visible)
+            self.show()
+            # shows the window (regardless of status)
+        except:
+        # if it can't show the window (probably already open)
+            None
+            # does nothing
+
+### Pre-Window -> Point Grabber Delay ###
+
+    def pwpgd(self, ok: bool):
+        """A small function to slow down the UI swap"""
+        QTimer.singleShot(2000, self.uiStyle)
+        # waits 2 seconds, then calls the UIstyle update
 
 ### Headless UI ###
 
@@ -316,13 +1006,18 @@ class tepgWindow(QMainWindow):
         # sets the progress bar's size, so that the spacers don't do weird stuff
 
         self.channelLabel = QLabel()
-        self.channelLabel.setText("Starting point grabber...")
-        # sets initial text
+        if enablePoints:
+        # if the point grabbing is enabled
+            self.channelLabel.setText("Starting point grabber...")
+        else:
+        # if it's disabled
+            self.channelLabel.setText("Starting streak grabber...")
+            # sets initial text
         self.channelLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
 
         self.totalLabel = QLabel()
-        self.totalLabel.setText("No points found yet")
+        self.totalLabel.setText("Nothing found yet")
         # sets initial text
         self.totalLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
@@ -351,52 +1046,104 @@ class tepgWindow(QMainWindow):
     def handleProgress(self, progressDict: dict):
         """A function to manage the progress bar and channel name"""
 
-        channel = progressDict["channel"]
-        # the channel name (str)
-        index = progressDict["index"]
-        # the channel's position in the list (0:X)
-        points = progressDict["points"]
-        # point count (int)
-        error = progressDict["error"]
-        # boolean for whether an error occurred
-        total = progressDict["total"]
-        # the total points so far
-        streaks = progressDict["streaks"]
-        # whether this channel's streak is enabled
-        streak = progressDict["streak"]
-        # the current channel's streak
-        # grabs all the relevant information from the passed dictionary
+        dictType = progressDict["type"]
+        # the type of dictionary sent (full or single)
 
-        percentage = int(((index + 1) / self.channelLength ) * 100)
-        # calculates the current percentage (index+1 out of the total = 0-1 * 100 = percentage)
+        if dictType == "full":
+        # if the dictionary is a full one (going through a list of channels)
 
-        self.progressBar.setValue(percentage)
-        # sets the progress bar value
+            channel = progressDict["channel"]
+            # the channel name (str)
+            index = progressDict["index"]
+            # the channel's position in the list (0:X)
+            points = progressDict["points"]
+            # point count (int)
+            error = progressDict["error"]
+            # boolean for whether an error occurred
+            total = progressDict["total"]
+            # the total points so far
+            streaks = progressDict["streaks"]
+            # whether this channel's streak is enabled
+            streak = progressDict["streak"]
+            # the current channel's streak
+            # grabs all the relevant information from the passed dictionary
 
-        pointString = f"{points:,} points"
-        # formats the number to use formatting (no decimals, thousand comma)
+            percentage = int(((index + 1) / self.channelLength ) * 100)
+            # calculates the current percentage (index+1 out of the total = 0-1 * 100 = percentage)
 
-        totalString = f"Points across channels: {total:,}"
-        # formats the total number
+            self.progressBar.setValue(percentage)
+            # sets the progress bar value
 
-        if error:
-        # if there's an error reported
-            self.channelLabel.setText(f"Error with {channel}, couldn't get points")
-            # sets an error text
+            if points == "Not checked":
+            # if the points have a set string
+                pointString = f""
+                # sets the point string to empty
+                midString = "A"
+                # makes the midString "A" -> "A streak of"
+            else:
+            # if the points are set to something else (a number)
+                pointString = f"{points:,} points found"
+                # formats the number to use formatting (no decimals, thousand comma)
+                if streaks:
+                # if streaks are enabled
+                    midString = f" and a"
+                    # "x points found and a streak of"
+
+            if total == "Not checked":
+            # if the total is unchecked (no point gathering)
+                totalString = f""
+                # sets to empty
+            else:
+            # if the total is not that (number)
+                totalString = f"Points across channels: {total:,}"
+                # formats the total number
+
+            if error:
+            # if there's an error reported
+                self.channelLabel.setText(f"Error with {channel}, couldn't get points")
+                # sets an error text
+            else:
+                if streaks:
+                # if the streaks are enabled for this channel
+                    self.channelLabel.setText(f"{pointString}{midString} streak of {streak} found for {channel}")
+                    # sets the text to match
+                else:
+                    self.channelLabel.setText(f"{pointString} for {channel}!")
+                    # sets the text to match
+
+            self.totalLabel.setText(f"{totalString}")
+            # sets the total string to match
+
+            self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
+            # sets the current channel index string
+        
         else:
-            if streaks:
-            # if the streaks are enabled for this channel
+        # if the dictionary is a single channel
+            channel = progressDict["channel"]
+            # the channel name (str)
+            points = progressDict["points"]
+            # point count (int)
+            error = progressDict["error"]
+            # boolean for whether an error occurred
+            streak = progressDict["streak"]
+            # the current channel's streak
+            # grabs all the relevant information from the passed dictionary
+
+            pointString = f"{points:,} points"
+            # formats the number to use formatting (no decimals, thousand comma)
+
+            if error:
+            # if there's an error reported
+                self.channelLabel.setText(f"Error with {channel}, couldn't get points")
+                # sets an error text
+            else:
+            # no error ->
                 self.channelLabel.setText(f"{pointString} and a streak of {streak} found for {channel}")
                 # sets the text to match
-            else:
-                self.channelLabel.setText(f"{pointString} found for {channel}!")
-                # sets the text to match
 
-        self.totalLabel.setText(f"{totalString}")
-        # sets the total string to match
+            self.progressBar.setValue(100)
+            # sets the progress bar value
 
-        self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
-        # sets the current channel index string
 
     def progressDone(self, errors: int, streak: int):
         """A function to change the headless UI into completion mode"""
@@ -406,8 +1153,23 @@ class tepgWindow(QMainWindow):
         # if streaks are enabled
             self.totalLabel.setText(f"{preFinalText} - highest streak: {streak}")
             # makes the total label state the max streak as well
-        self.channelLabel.setText(f"All channels scoured - points have been saved to CSV!\n\nTEPG was unable to store points for {errors} out of {len(self.channels)} channels\n\nFeel free to exit, thank you for using TEPG <3\n")
-        # final UI update
+        if errors > 0:
+        # if there was at least one error
+            finalString = (
+                        f"All channels scoured - points have been saved to CSV!\n\n"
+                        f"TEPG was unable to store points for {errors} out of {len(self.channels)} channels\n\n"
+                        f"Feel free to exit, thank you for using TEPG <3\n"
+                        )
+            # forms final string with error count
+        else:
+        # if there were no errors
+            finalString = (
+                        f"All channels scoured - points have been saved to CSV!\n\n\n"
+                        f"Feel free to exit, thank you for using TEPG <3\n"
+                        )
+            # forms final string with no errors
+        self.channelLabel.setText(finalString)
+        # final UI update with the formed string
         self.currentLabel.hide()
         # hides the index number
 
@@ -436,7 +1198,7 @@ class tepgWindow(QMainWindow):
 
 ### UI Style Picker ###
 
-    def uiStyle(self, auth: bool):
+    def uiStyle(self):
         """Function to change the UI when called for"""
 
         self.taskView.hide()
@@ -457,8 +1219,13 @@ class tepgWindow(QMainWindow):
 
 ### Auth Token Grabber ###
 
-    def extractAuthToken(self, done=None):
+    def extractAuthToken(self, ok: bool):
         """Function to get the auth token from storage"""
+
+        if not self.forceBrowserUI:
+        # if the force browser boolean isn't true (only true if already ran once)
+            self.browserShow.emit(True)
+            # tells the browser to hide, but show the UI
 
         storedCookies = self.browserView.page().profile().cookieStore()
         # gets the stored cookies
@@ -488,9 +1255,11 @@ class tepgWindow(QMainWindow):
             # adds both to the list of cookies
 
             if name == "auth-token":
-            # if the name of the cookie matches 
+            # if the name of the cookie matches
                 self.state.authToken = value
                 # stores the value of that cookie in the variable
+                storedCookies.cookieAdded.disconnect()
+                # stops looking for cookies
                 self.taskText.emit("Auth token found, validating...")
                 # user update
 
@@ -523,10 +1292,14 @@ class tepgWindow(QMainWindow):
                 # sets the pyqt signal to true
             else:
             # if the result is False (failure)
-                None
+                raise Exception
+                # forces an error
         except:
         # if the channel check fails
-            None
+            self.taskText.emit("Token could not be validated, ensure you're logged in to Twitch")
+            # changes UI text to error
+            self.browserShow.emit(False)
+            # tells browserShow to show the window
 
 
     ### Channel Lister ###
@@ -536,17 +1309,26 @@ class tepgWindow(QMainWindow):
         self.channels = []
         # clears the list
 
-        with open(self.channelTxtPath) as channelFile:
-        # opens the channel list.txt file 
-            for channel in channelFile:
-            # goes through each line (channel)
-                channel = channel.strip("\n")
-                # removes the newline marker
-                self.channels.append(channel)
-                # adds the channel to the list of channels
+        if self.overrideChannel == None:
+        # if there's no override channel set
+            with open(self.channelTxtPath) as channelFile:
+            # opens the channel list.txt file 
+                for channel in channelFile:
+                # goes through each line (channel)
+                    channel = channel.strip("\n")
+                    # removes the newline marker
+                    self.channels.append(channel)
+                    # adds the channel to the list of channels
 
-        self.taskText.emit(f"Found {len(self.channels)} channels...")
-        # user update
+            self.taskText.emit(f"Found {len(self.channels)} channels...")
+            # user update
+
+        else:
+        # if the boolean is true (single channel passed)
+            self.channels.append(self.overrideChannel)
+            # adds the override channel to the list of channels
+            self.taskText.emit(f"Checking single channel: {self.overrideChannel}...")
+            # user update
 
         return self.channels
         # returns the list of channels to caller
@@ -644,7 +1426,7 @@ def pointGrabber(state, channel: str) -> dict:
 
 ### Streak Grabber ###
 
-def streakGrabber(state, channel: str, channelID: str):
+def streakGrabber(state, channel: str, channelID:str = None) -> dict:
     """The function that grabs streak information"""
     global clientID, reqSession
 
@@ -660,51 +1442,95 @@ def streakGrabber(state, channel: str, channelID: str):
     }
     # forms the headers used to dictate the data request type
     
-    payload = {
-    # forms a payload from the required information
-        "operationName": "RewardList",
-        "variables": {
-            "channelLogin": channel,
-            "channelID": channelID
-            # which channel to "login" to
-        },
-        "extensions": {
-            "persistedQuery": {
-                "sha256Hash": "0b1471876d7647993731b9e3c6a13bf304c67fb31d07f06a945d42286ee377c4",
-                "version": 1
-                # this hash is found in devTools console, (search for watch streak -> GQL with "RewardList" operation)
+    if channelID == None:
+    # if no channelID is passed
+        idPayload = {
+        # forms a payload just for the ID
+            "operationName": "ChannelPollContext_GetViewablePoll",
+            # this was the first operation I found that has a return for the ID without requesting with the ID
+            "variables": {
+                "login": channel,
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "sha256Hash": "e83188a3836c636393df3191665e543a03733d7c51d3ade3d85e42aa46c2bf55",
+                    # the hash for the operation, may change
+                    "version": 1
+                }
             }
         }
-    }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
+        idRequest = reqSession.post(rURL, json = idPayload, headers = headers)
+        # makes request to get the 
+        idData = idRequest.json()
+        # stores the resulting data json
 
-    try:
-    # tries to read the received data file
-        if data and data["data"]:
-        # checks if the data package is valid and that there's a header for "data"
-            streak = data["data"]["channel"]["self"]["watchStreakMilestone"]["watchStreakMilestone"]
-            # stores the location of the streak in the data json
-            try:
-                return {"success": True, "streak": streak["value"]}
-                # returns a dictionary with success
+        try:
+        # attempts to access the returned json
+            if idData and idData["data"]:
+            # if there's a return package and the package has "data"
+                channelID = idData["data"]["channel"]["id"]
+                # grabs the channel ID from the returned data package
+            else:
+                return {"success": False, "error": "ChannelID not found"}
+                # returns failure dict
+        except:
+        # if it can't access/fails at 
+            return {"success": False, "error": "ChannelID failure"}
+            # returns a failure dict
+    
+    if channelID != None:
+    # if the channelID is now not None
+        payload = {
+        # forms a payload from the required information
+            "operationName": "RewardList",
+            "variables": {
+                "channelLogin": channel,
+                "channelID": channelID
+                # which channel to "login" to
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "sha256Hash": "0b1471876d7647993731b9e3c6a13bf304c67fb31d07f06a945d42286ee377c4",
+                    "version": 1
+                    # this hash is found in devTools console, (search for watch streak -> GQL with "RewardList" operation)
+                }
+            }
+        }
 
-            except Exception as twErr:
-            # saves the error as tw(itch)Err(or)
-                return {"success": False, "error": f"{str(twErr)}"}
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+
+        try:
+        # tries to read the received data file
+            if data and data["data"]:
+            # checks if the data package is valid and that there's a header for "data"
+                streak = data["data"]["channel"]["self"]["watchStreakMilestone"]["watchStreakMilestone"]
+                # stores the location of the streak in the data json
+                try:
+                    return {"success": True, "streak": streak["value"], "channelID": channelID}
+                    # returns a dictionary with success
+
+                except Exception as twErr:
+                # saves the error as tw(itch)Err(or)
+                    return {"success": False, "error": f"{str(twErr)}"}
+                    # returns a dictionary with failure
+            else:
+            # if the data package isn't valid and/or there's no data header
+                return {"success": False, "error": "User likely banned"}
                 # returns a dictionary with failure
-        else:
-        # if the data package isn't valid and/or there's no data header
-            return {"success": False, "error": "User likely banned"}
-            # returns a dictionary with failure
 
-    except Exception as dtErr:
-    # saves the error as d(a)t(a)Err(or)
-        return {"success": False, "error": f"{str(dtErr)}"}
+        except Exception as dtErr:
+        # saves the error as d(a)t(a)Err(or)
+            return {"success": False, "error": f"{str(dtErr)}"}
+            # returns a dictionary with failure
+    else:
+    # if there's still no ID
+        return {"success": False, "error": "No channelID!"}
         # returns a dictionary with failure
+
 
 
 ### Authorisation Token "Storage" ###
@@ -738,8 +1564,14 @@ class PointWorker(QObject):
         # sets running to true
         self.streakMap = streakMap 
         # the streak map that contains the streak-grabbable channels
+        self.autoStreaks = autoAddStreaks
+        # the boolean to determine whether to auto-grab streaks
         self.enableStreaks = enableStreaks
         # the boolean to determine whether to grab streaks or not
+        self.enablePoints = enablePoints
+        # the boolean to determine whether to grab points or not
+        self.overrideChannel = overrideChannel
+        # the channel to potentially override with
 
     @pyqtSlot()
     def run(self):
@@ -757,11 +1589,159 @@ class PointWorker(QObject):
         self.errorCount = 0
         # starts a counter for errors (how many channels couldn't be saved)
 
+        errorBool = False
+        # defaults to false
+
         self.maxStreak = 0
         # starts a maximum streak store
 
-        for num, channel in enumerate(self.channels):
-        # goes through each channel in the list (gets channel and index)
+        if self.overrideChannel == None:
+        # if no override channel is defined, goes through the list
+
+            for num, channel in enumerate(self.channels):
+            # goes through each channel in the list (gets channel and index)
+
+                if enablePoints:
+                # if the point grabbing is enabled
+
+                    points = pointGrabber(self.state, channel)
+                    # calls the point grabber to get the channel's point amount
+
+                    if points["success"]:
+                    # checks the points entry for success boolean
+                        foundPoints = int(points["points"])
+                        # stores the points
+                        errorBool = False
+                        # sets the error bool to false
+                    else:
+                    # if the point entry success is False (something went wrong)
+                        foundPoints = 0
+                        # stores 0
+                        errorBool = True
+                        # sets the error bool to true (will tell the UI to display error text)
+                        self.errorCount = (self.errorCount + 1)
+                        # on error, adds an error to counter
+
+                    self.totalPoints = (self.totalPoints + foundPoints)
+                    # adds the channel's points to the total amount
+                else:
+                # if point checking is disabled
+                    foundPoints = "Not checked"
+                    self.totalPoints = "Not checked"
+                    # sets the points to nothing
+
+                if enableStreaks:
+                # if the streak-grabbing is enabled
+
+                    if enablePoints:
+                    # if points and streaks are enabled, slows down the process a bit more
+                        QThread.msleep(1000)
+                        # sleeps for a second (avoids limiting)
+                    
+                    if channel in streakMap:
+                    # if the channel is in the streak map
+                        streak = streakGrabber(self.state, channel, streakMap[channel])
+                        # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
+                    else:
+                    # if the channel isn't in the map
+                        streak = streakGrabber(self.state, channel)
+                        # calls the streak grabber to get the streak
+
+                    if streak["success"]:
+                    # if the streak success entry is true
+                        streakNum = int(streak["streak"])
+                        # gets the streak
+
+                        if streakNum > 1 and channel not in streakMap and autoAddStreaks:
+                        # if there's a streak present and the channel isn't stored yet, plus the config option to add them to map is on
+                            streakMap[channel] = streak["channelID"]
+                            # stores the channel with its ID 
+
+                    else:
+                    # if the streak entry is false
+                        streakNum = 0
+                        # sets to default of 0
+
+                    if streakNum > self.maxStreak:
+                    # if the current streak is larger than the stored max streak
+                        self.maxStreak = streakNum
+                        # reassigns the max streak to match
+                    
+                    if enableErrorLog:
+                    # if errors should be logged into CSV
+                        csvEntries[channel] = {
+                            "points": foundPoints,
+                            "streak": streakNum,
+                            "error": errorBool
+                        }
+                    else:
+                    # if not
+                        csvEntries[channel] = {
+                            "points": foundPoints,
+                            "streak": streakNum
+                        }
+                    # stores the points and streak in the channel's csv entry
+
+                    self.progressDict = {
+                        "type": "full",
+                        "channel": channel,
+                        "index": num,
+                        "points": foundPoints,
+                        "error": errorBool,
+                        "total": self.totalPoints,
+                        "streaks": True,
+                        "streak": streakNum 
+                    }
+                    # forms a progress dictionary to pass
+
+                else:
+                # if the streak-grabbing is disabled
+
+                    if enableErrorLog:
+                    # if errors should be logged into CSV
+                        csvEntries[channel] = {
+                            "points": foundPoints,
+                            "streak": 0,
+                            "error": errorBool
+                        }
+                    else:
+                        csvEntries[channel] = {
+                            "points": foundPoints,
+                            "streak": 0
+                        }
+                        # stores the points in the channel's csv entry
+
+                    self.progressDict = {
+                        "type": "full",
+                        "channel": channel,
+                        "index": num,
+                        "points": foundPoints,
+                        "error": errorBool,
+                        "total": self.totalPoints,
+                        "streaks": False,
+                        "streak": 0 
+                    }
+                    # forms a progress dictionary to pass
+
+                self.progress.emit(self.progressDict)
+                # sends a progress update to the headless UI updater
+
+                QThread.msleep(1500)
+                # waits 1.5s/channel
+
+            with open(streakMapPath, "w") as strk:
+            # opens the streak config location
+                json.dump(streakMap, strk, indent=3)
+                # dumps the map into file
+            
+            self.csvWriter(csvEntries, self.errorCount, self.maxStreak)
+            # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
+
+        else:
+        # if a channel override is set (only one channel)
+
+            channel = self.overrideChannel
+            # sets the channel to the override
 
             points = pointGrabber(self.state, channel)
             # calls the point grabber to get the channel's point amount
@@ -784,81 +1764,44 @@ class PointWorker(QObject):
             self.totalPoints = (self.totalPoints + foundPoints)
             # adds the channel's points to the total amount
 
-            if enableStreaks and channel in streakMap:
-            # if the streak-grabbing is enabled
+            streak = streakGrabber(self.state, channel)
+            # calls the streak grabber to get the streak
 
-                QThread.msleep(1000)
-                # sleeps for a second (avoids limiting)
-                
-                channelID = int(streakMap[channel])
-                # gets the channel ID from the streak map
-
-                streak = streakGrabber(self.state, channel, str(channelID))
-                # calls the streak grabber to get the streak
-
-                if streak["success"]:
-                # if the streak success entry is true
-                    streakNum = int(streak["streak"])
-                    # gets the streak
-                else:
-                # if the streak entry is false
-                    streakNum = 0
-                    # sets to default of 0
-
-                if streakNum > self.maxStreak:
-                # if the current streak is larger than the stored max streak
-                    self.maxStreak = streakNum
-                    # reassigns the max streak to match
-
-                csvEntries[channel] = {
-                    "points": foundPoints,
-                    "streak": streakNum
-                }
-                # stores the points and streak in the channel's csv entry
-
-                self.progressDict = {
-                    "channel": channel,
-                    "index": num,
-                    "points": foundPoints,
-                    "error": errorBool,
-                    "total": self.totalPoints,
-                    "streaks": True,
-                    "streak": streakNum 
-                }
-                # forms a progress dictionary to pass
+            if streak["success"]:
+            # if the streak success entry is true
+                streakNum = int(streak["streak"])
+                # gets the streak
 
             else:
-            # if the streak-grabbing is disabled
-                csvEntries[channel] = {
-                    "points": foundPoints,
-                    "streak": 0
-                }
-                # stores the points in the channel's csv entry
+            # if the streak entry is false
+                streakNum = 0
+                # sets to default of 0
 
-                self.progressDict = {
-                    "channel": channel,
-                    "index": num,
-                    "points": foundPoints,
-                    "error": errorBool,
-                    "total": self.totalPoints,
-                    "streaks": False,
-                    "streak": 0 
-                }
-                # forms a progress dictionary to pass
+            csvEntries[channel] = {
+                "points": foundPoints,
+                "streak": streakNum,
+                "error": errorBool
+            }
+            # forms the csvEntry for the channel
+
+            self.progressDict = {
+                "type": "single",
+                "channel": channel,
+                "index": num,
+                "points": foundPoints,
+                "error": errorBool,
+                "total": self.totalPoints,
+                "streaks": False,
+                "streak": 0 
+            }
+            # forms a progress dictionary to pass
 
             self.progress.emit(self.progressDict)
-            # sends the progress update to the headless UI updater
-
-            QThread.msleep(1500)
-            # waits 1.5s/channel
-        
-        self.csvWriter(csvEntries, self.errorCount, self.maxStreak)
-        # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
-
+            # sends a progress update to the headless UI updater
 
     ### CSV Writer ###
 
-    def csvWriter(self, csvEntries: dict, errors: int, streak: int):
+    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int):
         """The function that writes the final CSV"""
 
         rows = []
@@ -886,18 +1829,20 @@ class PointWorker(QObject):
         dataframe.to_csv(self.csvPath, index=False)
         # pushes everything to the csv file
         
-        self.finished.emit(errors, streak)
-        # once done, sends a signal to the finished pyqt signal with the error count
+        self.finished.emit(errors, maxStreak)
+        # once done, sends a signal to the finished pyqt signal with the error count and highest streak
             
 
 
 ### Startup ###
 
-app = QApplication(sys.argv)
-# base app instance (passes command line arguments)
-appState = AppState()
-# creates an app state instance to store some variables
-window = tepgWindow(appState)
-# creates a window
-app.exec()
-# exceutes the app task (runs the QApplication)
+if canRun:
+# if the permission slip is signed, runs the main window
+    app = QApplication(sys.argv)
+    # base app instance (passes command line arguments)
+    appState = AppState()
+    # creates an app state instance to store some variables
+    window = tepgWindow(appState)
+    # creates a window
+    app.exec()
+    # exceutes the app task (runs the QApplication)
