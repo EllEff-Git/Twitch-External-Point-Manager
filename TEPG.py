@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepgVer = "0.4.16.0012"
+tepgVer = "0.4.19.0442"
 """TEPG program version (Y.MM.DD.HHMM)"""
 
 
@@ -922,13 +922,13 @@ class starterWindow(QMainWindow):
             None
             # doesn't change anything
 
-        self.labelSwap.emit("Starting the main TEPG program...")
+        self.labelSwap.emit("Starting the main TEPG program...\nThis window will close and a new one will open...")
         # swaps the label once more
 
         canRun = True
         # sets the "permission slip" for the next stage to True (allows next window)
 
-        QTimer.singleShot(2500, self.stopper)
+        QTimer.singleShot(3000, self.stopper)
         # quits the starter application window with a small delay
 
 ### Stopper ###
@@ -1172,7 +1172,7 @@ class tepgWindow(QMainWindow):
             # sets initial text
         elif not enablePoints and enableStreaks:
         # if the point grabbing is disabled, streaks enabled
-            self.channelLabel.setText("Starting streakg grabber...")
+            self.channelLabel.setText("Starting streak grabber...")
             # sets initial text
         else:
         # something else?
@@ -1238,6 +1238,7 @@ class tepgWindow(QMainWindow):
             # boolean for whether streaks are being checked
             streak = progressDict["streak"]
             # the current channel's streak
+            expiryDate = progressDict["expiresAt"]
             # grabs all the relevant information from the passed dictionary
 
             percentage = int(((index + 1) / self.channelLength ) * 100)
@@ -1245,6 +1246,17 @@ class tepgWindow(QMainWindow):
 
             self.progressBar.setValue(percentage)
             # sets the progress bar value
+
+            if streaksOn:
+            # if streaks are being checked
+                if streak > 0:
+                # if there's a streak
+                    streakString = f"streak of {streak}"
+                    # forms a string with the streak
+                else:
+                # if the streak is 0
+                    streakString = f"no active streak"
+                    # forms a none-streak string
 
             if pointsOn:
             # if point-checking is enabled
@@ -1280,8 +1292,14 @@ class tepgWindow(QMainWindow):
                 # if no error
                     if streaksOn:
                     # if the streaks are enabled
-                        self.channelLabel.setText(f"{pointString}{midString} streak of {streak} found for {channel}")
-                        # sets the text to match
+                        if expiryDate == "nah":
+                        # if the expiry date is set to "nah" (not expiring)
+                            self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}")
+                            # sets the text to match
+                        else:
+                        # if there's an expiry date
+                            self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nStreak expiring at {expiryDate}!")
+                            # sets warning
                     else:
                     # streaks disabled
                         self.channelLabel.setText(f"{pointString} for {channel}!")
@@ -1306,11 +1324,23 @@ class tepgWindow(QMainWindow):
                         # no streak text
                     elif streak < 100 and (str(streak).startswith("8") or streak == 18 or streak == 11):
                     # if streak is <100, and one of: the first number of streak is an 8 (eighty-X or just 8) or it's 11 or 18
-                        self.channelLabel.setText(f"{channel} has an {streak}-day streak!")
-                        # sets the text to match (it has "an" as prefix, not "a")
+                        if expiryDate == "nah":
+                        # no expiry date
+                            self.channelLabel.setText(f"{channel} has an {streak} day streak!")
+                            # sets the text to match (it has "an" as prefix, not "a")
+                        else:
+                        # if there's a date
+                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nStreak expires at {expiryDate}!")
+                            # sets the text to match (it has "an" as prefix, not "a")
                     else:
-                        self.channelLabel.setText(f"{channel} has a {streak}-day streak!")
-                        # sets the text to match
+                        if expiryDate == "nah":
+                        # no expiry date
+                            self.channelLabel.setText(f"{channel} has a {streak} day streak!")
+                            # sets the text to match
+                        else:
+                        # yes expiry date
+                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nStreak expires at {expiryDate}!")
+                            # sets text with streak warning
 
             self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
             # sets the current channel index string
@@ -1342,7 +1372,7 @@ class tepgWindow(QMainWindow):
             self.progressBar.setValue(100)
             # sets the progress bar value
 
-    def progressDone(self, errors: int, streak: int):
+    def progressDone(self, errors: int, streak: int, expiryList: list=None):
         """A function to change the headless UI into completion mode"""
         preFinalText = self.totalLabel.text()
         # gets the text from the label
@@ -1364,18 +1394,28 @@ class tepgWindow(QMainWindow):
             self.totalLabel.setText(f"")
             # sets no label
 
+        if not expiryList or len(expiryList) == 0:
+        # if the expiry list isn't passed or is empty
+            expiryString = f""
+            # sets the string to naught
+        else:
+            expiryString = f"Channels with expiring streaks: {", ".join(expiryList)}"
+            # turns the list into a string
+
         if errors > 0:
         # if there was at least one error
             finalString = (
                         f"All channels scoured - stats have been saved to CSV!\n\n"
                         f"TEPG was unable to store points for {errors} out of {len(self.channels)} channels\n\n"
+                        f"{expiryString}\n\n"
                         f"Feel free to exit, thank you for using TEPG <3\n"
                         )
             # forms final string with error count
         else:
         # if there were no errors
             finalString = (
-                        f"All channels scoured - stats have been saved to CSV!\n\n\n"
+                        f"All channels scoured - stats have been saved to CSV!\n\n"
+                        f"{expiryString}\n\n"
                         f"Feel free to exit, thank you for using TEPG <3\n"
                         )
             # forms final string with no errors
@@ -1725,8 +1765,18 @@ def streakGrabber(state, channel: str, channelID:int = None) -> dict:
             # checks if the data package is valid and that there's a header for "data"
                 streak = data["data"]["channel"]["self"]["watchStreakMilestone"]["watchStreakMilestone"]
                 # stores the location of the streak in the data json
+                expires = data["data"]["channel"]["self"]["watchStreakMilestone"]["expiresAt"]
+                # grabs the expiry data
+                if expires:
+                # if the expiry date has a value
+                    expiryDate = expires
+                    # stores the expiry date
+                else:
+                # if there's no value
+                    expiryDate = None
+                    # sets none                       
                 try:
-                    return {"success": True, "error": "None", "streak": streak["value"], "channelID": channelID}
+                    return {"success": True, "error": "None", "streak": streak["value"], "channelID": channelID, "expires": expiryDate}
                     # returns a dictionary with success
 
                 except Exception as twErr:
@@ -1775,7 +1825,7 @@ class PointWorker(QObject):
     # signals to communicate with UI
     progress = pyqtSignal(dict)
     # stores the percentage, channel name and points inside a pyqt singal, to update UI
-    finished = pyqtSignal(int, int)
+    finished = pyqtSignal(int, int, list)
     # gets set when done
 
     def __init__(self, state, channels, csvPath):
@@ -1802,6 +1852,9 @@ class PointWorker(QObject):
 
         self.progressDict = {}
         # empty dictionary, filled per loop, sent to UI
+
+        self.expiringList = []
+        # empty list for expiring streak channels
 
         self.totalPoints = 0
         # stores the total amount of points gathered
@@ -1880,6 +1933,17 @@ class PointWorker(QObject):
                     # if the streak success entry is true
                         streakNum = int(streak["streak"])
                         # gets the streak
+                        if not streak.get("expires") == None:
+                        # if there's a set expiry date (not None)
+                            expiring = True
+                            # sets the flag to True so it gets spotted
+                            self.expiringList.append({channel: streak.get("expires", "Soon")})
+                            # adds the expiring channel's expiry date to a list to display at the end
+                        else:
+                        # if there's no date (not expiring)
+                            expiring = False
+                            # sets the flag to False so it doesn't get set
+
                         if streakNum > 1 and channel not in streakMap and autoAddStreaks:
                         # if there's a streak present and the channel isn't stored yet, plus the config option to add them to the streak map is on
                             streakMap[channel] = int(streak["channelID"])
@@ -1894,6 +1958,8 @@ class PointWorker(QObject):
                         # sets to default of 0
                         errorBool = True
                         # sets bool for error to true
+                        expiring = False
+                        # sets the bool for expiry to False
 
                     if streakNum > self.maxStreak:
                     # if the current streak is larger than the stored max streak
@@ -1904,6 +1970,8 @@ class PointWorker(QObject):
                 # if the streak-grabbing is disabled
                     streakNum = 0
                     # sets the streak number to 0
+                    expiring = False
+                    # sets to false automatically
                 
                 if enablePoints and not enableStreaks:
                 # if only points are on
@@ -1931,18 +1999,36 @@ class PointWorker(QObject):
                     }
                     # stores the points and streak in the channel's csv entry
 
-                self.progressDict = {
-                    "type": "full",
-                    "channel": channel,
-                    "index": num,
-                    "pointsOn": enablePoints,
-                    "points": foundPoints,
-                    "error": errorBool,
-                    "total": self.totalPoints,
-                    "streaksOn": enableStreaks,
-                    "streak": streakNum
-                }
-                # forms a progress dictionary to pass
+                if expiring:
+                # if there's an expiration date
+                    self.progressDict = {
+                        "type": "full",
+                        "channel": channel,
+                        "index": num,
+                        "pointsOn": enablePoints,
+                        "points": foundPoints,
+                        "error": errorBool,
+                        "total": self.totalPoints,
+                        "streaksOn": enableStreaks,
+                        "streak": streakNum,
+                        "expiresAt": streak["expires"]
+                    }
+                    # forms a progress dictionary to pass
+                else:
+                # if there's no expiry date
+                    self.progressDict = {
+                        "type": "full",
+                        "channel": channel,
+                        "index": num,
+                        "pointsOn": enablePoints,
+                        "points": foundPoints,
+                        "error": errorBool,
+                        "total": self.totalPoints,
+                        "streaksOn": enableStreaks,
+                        "streak": streakNum,
+                        "expiresAt": "nah"
+                    }
+                    # forms a progress dictionary to pass
 
                 self.progress.emit(self.progressDict)
                 # sends a progress update to the headless UI updater
@@ -1955,7 +2041,7 @@ class PointWorker(QObject):
                 json.dump(streakMap, strk, indent=3)
                 # dumps the map into file
             
-            self.csvWriter(csvEntries, self.errorCount, self.maxStreak)
+            self.csvWriter(csvEntries, self.errorCount, self.maxStreak, self.expiringList)
             # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
 
         else:
@@ -2023,7 +2109,7 @@ class PointWorker(QObject):
 
     ### CSV Writer ###
 
-    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int):
+    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int, expiryList: list=None):
         """The function that writes the final CSV"""
 
         rows = []
@@ -2054,9 +2140,14 @@ class PointWorker(QObject):
 
         dataframe.to_csv(self.csvPath, index=False)
         # pushes everything to the csv file
-        
-        self.finished.emit(errors, maxStreak)
-        # once done, sends a signal to the finished pyqt signal with the error count and highest streak
+
+        if not expiryList:
+        # if the expiry list isn't defined (not passed)
+            expiryList = []
+            # makes an empty list
+
+        self.finished.emit(errors, maxStreak, expiryList)
+        # once done, sends a signal to the finished pyqt signal with the error count, highest streak and expiration list
             
 
 
