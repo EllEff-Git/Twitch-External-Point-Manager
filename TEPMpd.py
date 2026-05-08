@@ -17,12 +17,12 @@ iconPath = None
 if getattr(sys, "frozen", False):
 # since the program bundled with pyInstaller, it's "frozen"
     directory = os.path.dirname(sys.executable)
-    iconPath = os.path.join(sys._MEIPASS, "tepmIcon.png")
+    iconPath = os.path.join(sys._MEIPASS, "tepmpdIcon.png")
     # reassigns the path variables accordingly
 else:
 # if somehow not in a bundled (frozen) state
     directory = os.path.dirname(__file__)
-    iconPath = os.path.join(directory, "..", "icons", "tepmIcon.png")
+    iconPath = os.path.join(directory, "..", "icons", "tepmpdIcon.png")
     # reassigns the path variables accordingly
 
 

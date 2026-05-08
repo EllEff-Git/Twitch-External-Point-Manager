@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.8.2120"
+tepmVer = "0.5.8.2320"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -111,11 +111,13 @@ def folders(path):
 
 
 
-class starterWindow(QMainWindow):
+class starterWindow(QWidget):
     """A class for the first window that pops up"""
 
     labelSwap = pyqtSignal(str)
     # a pyQt signal to swap the label
+    ready = pyqtSignal()
+    # a pyQt signal to indicate readiness state
 
     def __init__(self):
         super().__init__()
@@ -135,8 +137,8 @@ class starterWindow(QMainWindow):
         self.programName = f"TEPM Starter v{self.version}"
         # stores the program name
 
-        self.windowSizeX = max(900, int(startApp.primaryScreen().size().width() / 3))
-        self.windowSizeY = max(600, int(startApp.primaryScreen().size().height() / 3))
+        self.windowSizeX = max(900, int(app.primaryScreen().size().width() / 3))
+        self.windowSizeY = max(600, int(app.primaryScreen().size().height() / 3))
         # base window sizes (min between 900 pixels and ~33% of the main monitor's width and height)
 
         self.optionReturn = False
@@ -157,8 +159,6 @@ class starterWindow(QMainWindow):
 
     ### UI Elements ###
 
-        self.container = QWidget()
-        # a container to hold elements
         self.mainLayout = QGridLayout()
         # new grid layout to put elements into
         self.mainLayout.setSpacing(0)
@@ -186,9 +186,6 @@ class starterWindow(QMainWindow):
         # allows columns 1, 2 and 3 (center) to stretch
         self.mainLayout.setRowStretch(2, 1)
         # allows row 2 (center) to stretch
-
-        self.container.setLayout(self.mainLayout)
-        # sets the container to use layout
 
         self.mainLabel = QLabel()
         # a label to hold the main information about current process
@@ -222,7 +219,7 @@ class starterWindow(QMainWindow):
 
     ### Intermediary ###
 
-        self.setCentralWidget(self.container)
+        self.setLayout(self.mainLayout)
         # sets the container to fill the window
         self.labelSwap.connect(self.changeLabel)
         # connects the label swap signal to the change label function
@@ -1101,8 +1098,6 @@ class starterWindow(QMainWindow):
 
         if canRun:
         # if the canRun is already set to True (returning from main)
-            window.show()
-            # opens the main window
             QTimer.singleShot(750, self.stopper)
             # shorter delay
         else:
@@ -1120,29 +1115,19 @@ class starterWindow(QMainWindow):
 
     def stopper(self):
         """Function to call when a stop is needed (with a delay)"""
-        self.close()
-        # just closes the window
-
-
-
-### Starter Startup ###
-
-
-
-startApp = QApplication(sys.argv)
-# base app instance (passes command line arguments)
-startWindow = starterWindow()
-# creates a window
-startApp.exec()
-# exceutes the app task (runs the QApplication)
-
+        self.hide()
+        # just closes the window]
+        self.ready.emit()
+        # sends a signal to the pyQt signal to let the main window know it's ready
+        mainWindow.show()
+        # opens the main window
 
 
 ### Main App Window ###
 
 
 
-class tepmWindow(QMainWindow):
+class tepmWindow(QWidget):
     """The application window class"""
 
     authValid = pyqtSignal(bool)
@@ -1198,13 +1183,15 @@ class tepmWindow(QMainWindow):
         # adds a new webengine view
 
         self.predictChannelPoints = 0
-        """variable to store the predict channel's point balance"""
+        """Variable to store the predict channel's point balance"""
         self.displayWindowBool = False
-        """whether the details window should be alive"""
+        """Whether the details window should be alive"""
         self.modWindowBool = False
-        """whether the mod window should be alive"""
+        """Whether the mod window should be alive"""
         self.previousEventState = None
-        """variable to store the previous event info"""
+        """Variable to store the previous event info"""
+        self.doneLoading = False
+        """Boolean to check if browser is done loading"""
 
 
 
@@ -1225,12 +1212,8 @@ class tepmWindow(QMainWindow):
         # creates a layout
         self.mainLayout.setSpacing(25)
         # sets spacing between elements (vertical and horizontal)
-        self.container = QWidget()
-        # makes a container 
-        self.container.setLayout(self.mainLayout)
-        # sets the container to use the layout
-        self.setCentralWidget(self.container)
-        # sets the container to the middle
+        self.setLayout(self.mainLayout)
+        # sets the layout
 
 
 
@@ -1251,8 +1234,8 @@ class tepmWindow(QMainWindow):
         # initial value
         self.taskView.setToolTip("Current operation")
         # tooltip
-        self.taskView.setFixedSize(QSize(250, 40))
-        # sets a fixed size (~1/4th the window width, 40 px tall)
+        self.taskView.setFixedSize(QSize(350, 40))
+        # sets a fixed size to prevent being cut off
         self.taskView.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns to the center
         self.taskGrid.addWidget(self.taskView, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -1304,13 +1287,15 @@ class tepmWindow(QMainWindow):
 
         if not browserOnly:
         # if the browser-only mode isn't enabled
-            self.browserView.loadFinished.connect(self.extractAuthToken)
+            startWindow.ready.connect(self.extractAuthToken)
             # calls the auth grab when the page is done loading
         else:
         # if the browser-only mode *is* enabled
             self.browserWindow(False)
             # calls the browser window with False (forces full window size and shows it)
 
+        self.browserPage.loadFinished.connect(lambda: setattr(self, "doneLoading", True))
+        # once the browser is done loading, sets the boolean to true, allowing progress later on
         self.browserShow.connect(self.browserWindow)
         # calls browserWindow when the status is determined
         self.authValid.connect(self.pwpgd)
@@ -1325,32 +1310,32 @@ class tepmWindow(QMainWindow):
     ### Predict UI ###
 
         self.predictLayout = QGridLayout()
-        """adds a layout for the predictions"""
+        """A layout for the predictions"""
         self.mainLayout.addLayout(self.predictLayout, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to main layout
 
         self.predictionID = {}
-        """an empty map to enter the prediction ID information into"""
+        """Map to enter the prediction ID information into"""
 
 
     ### Predict Details ###
 
         self.predictInfoLayout = QGridLayout()
-        """a nested layout that hosts basic information about the prediction(s)"""
+        """Anested layout that hosts basic information about the prediction(s)"""
         self.predictInfoLayout.setSpacing(35)
         # adds a little more spacing
         self.predictLayout.addLayout(self.predictInfoLayout, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # top middle
 
         self.predictDetailLayout = QGridLayout()
-        """a further nested layout that hosts prediction specifics (status, name, creation, pool, outcome, task)"""
+        """A further nested layout that hosts prediction specifics (status, name, creation, pool, outcome, task)"""
         self.predictDetailLayout.setVerticalSpacing(25)
         # adds a little more vertical space
         self.predictInfoLayout.addLayout(self.predictDetailLayout, 2, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # under the basic info, above the buttons
 
         self.predictChannelLabel = QLabel()
-        """a label that holds the current channel name"""
+        """A label that holds the current channel name"""
         self.predictChannelLabel.setToolTip("Currently selected channel")
         # tooltip
         self.predictChannelLabel.setStyleSheet("""
@@ -1363,7 +1348,7 @@ class tepmWindow(QMainWindow):
         # adds it to the layout (top middle)
 
         self.predictPointLabel = QLabel()
-        """a label that holds the current channel's point balance"""
+        """A label that holds the current channel's point balance"""
         self.predictPointLabel.setToolTip("Current balance for this channel")
         # tooltip
         self.predictPointLabel.setStyleSheet("""
@@ -1382,7 +1367,7 @@ class tepmWindow(QMainWindow):
 
 
         self.predictStatusLabel = QLabel()
-        """a label that holds the prediction status (active, locked, paid out, refunded)"""
+        """A label that holds the prediction status (active, locked, paid out, refunded)"""
         self.predictStatusLabel.setToolTip("Prediction status")
         # tooltip
         self.predictStatusLabel.setStyleSheet("""
@@ -1396,7 +1381,7 @@ class tepmWindow(QMainWindow):
         # centers the text
 
         self.predictInfoLabel = QLabel()
-        """a label that holds the prediction name"""
+        """A label that holds the prediction name"""
         self.predictInfoLabel.setToolTip("Prediction name")
         # tooltip
         self.predictInfoLabel.setStyleSheet("""
@@ -1411,7 +1396,7 @@ class tepmWindow(QMainWindow):
         # centers the text
 
         self.predictDetailLabel = QLabel()
-        """a label that holds the prediction details (creator, timestamp)"""
+        """A label that holds the prediction details (creator, timestamp)"""
         self.predictDetailLabel.setToolTip("Prediction details")
         # tooltip
         self.predictDetailLabel.setStyleSheet("""
@@ -1427,7 +1412,7 @@ class tepmWindow(QMainWindow):
         # hides by default
 
         self.predictTimerLabel = QLabel("00:00")
-        """a label that holds the prediction timer (if active)"""
+        """A label that holds the prediction timer (if active)"""
         self.predictTimerLabel.setToolTip("Prediction timer")
         # tooltip
         self.predictTimerLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1437,7 +1422,7 @@ class tepmWindow(QMainWindow):
         
 
         self.predictPoolLabel = QLabel()
-        """a label that holds the total pool info"""
+        """A label that holds the total pool info"""
         self.predictPoolLabel.setStyleSheet("""
             QLabel {
                 font-size: 15px;
@@ -1452,7 +1437,7 @@ class tepmWindow(QMainWindow):
         # hides by default
 
         self.predictResultLabel = QLabel("Winner!")
-        """a label that holds the result (if resolved)"""
+        """A label that holds the result (if resolved)"""
         self.predictResultLabel.setStyleSheet("""
             QLabel {
                 font-weight: bold;
@@ -1469,7 +1454,7 @@ class tepmWindow(QMainWindow):
         # hides by default
 
         self.predictTaskLabel = QLabel("Current Task")
-        """a label that holds the current task op"""
+        """A label that holds the current task op"""
         self.predictTaskLabel.setStyleSheet("""
             QLabel {
                 color: yellow;
@@ -1510,7 +1495,7 @@ class tepmWindow(QMainWindow):
     ### Predict Button/Point Layout ###
 
         self.predictOutcomeLayout = QGridLayout()
-        """another nested layout that hosts the bet selectors and point totals"""
+        """A nested layout that hosts the bet selectors and point totals"""
         self.predictOutcomeLayout.setVerticalSpacing(15)
         # sets lower spacing
         self.predictInfoLayout.addLayout(self.predictOutcomeLayout, 4, 2, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -1621,20 +1606,20 @@ class tepmWindow(QMainWindow):
     ### Predict Actions ###
 
         self.predictSuperLayout = QGridLayout()
-        """layout that holds prediction elements (mod/details)"""
+        """Layout that holds prediction elements (mod/details)"""
         self.predictLayout.addLayout(self.predictSuperLayout, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the layout under the info/details layout
 
         self.predictBetLayout = QGridLayout()
-        """layout that holds the betting elements (amount + bet buttons)"""
+        """Layout that holds the betting elements (amount + bet buttons)"""
         self.predictSuperLayout.addLayout(self.predictBetLayout, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds into the super layout in the middle (col 1)
 
-        self.predictBetSpacer = QSpacerItem(200, 40)
-        """spacer that pushes the bet buttons down"""
+        self.predictBetSpacer = QSpacerItem(200, 35)
+        """Spacer that pushes the bet buttons down"""
 
         self.predictAmountLine = QLineEdit()
-        """way to customise the bet amount (int entry)"""
+        """Way to customise the bet amount (int entry)"""
         self.predictAmountLine.setToolTip("How many channel points to bet")
         # tooltip
         self.predictAmountLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1649,28 +1634,28 @@ class tepmWindow(QMainWindow):
         # connects writing to this to the bet masking function
 
         self.predictBetButton = QPushButton("Bet")
-        """confirm bet button"""
+        """Confirm bet button"""
         self.predictBetButton.setToolTip("Confirm bet amount")
         # tooltip
         self.predictBetButton.setMinimumSize(50, 40)
         # min size
 
         self.maxBetButton = QPushButton("Max")
-        """a button to bet max amount"""
+        """Button to bet max amount"""
         self.maxBetButton.setToolTip("Set max bet (requires confirmation)")
         # tooltip
         self.maxBetButton.setMinimumSize(50, 40)
         # min size
 
         self.modButton = QPushButton("Mod View")
-        """a button to enter mod mode"""
+        """Button to open mod view"""
         self.modButton.setToolTip("Open moderator view tab")
         # tooltip
         self.modButton.setMinimumSize(60, 40)
         # min size
 
         self.detailsButton = QPushButton("Details")
-        """a button to display further information about the bet"""
+        """Button to display further information about the bet"""
         self.detailsButton.setToolTip("Display more information about the prediction")
         # tooltip
         self.detailsButton.setMinimumSize(60, 40)
@@ -1706,12 +1691,12 @@ class tepmWindow(QMainWindow):
     ### Channel Swap ###
 
         self.predictChannelLayout = QGridLayout()
-        """layout that holds the channel swapping elements"""
+        """Layout that holds the channel swapping elements"""
         self.predictLayout.addLayout(self.predictChannelLayout, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the layout under the bet layout
 
         self.predictChannelLine = QLineEdit()
-        """way to change the channel (text entry)"""
+        """Change the channel (text entry)"""
         self.predictChannelLine.setToolTip("Enter another streamer here and press Change to move to their stream")
         # tooltip
         self.predictChannelLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1722,7 +1707,7 @@ class tepmWindow(QMainWindow):
         # min size
 
         self.predictChannelSwapButton = QPushButton("Change")
-        """way to change the channel (button)"""
+        """Change the channel (button)"""
         self.predictChannelSwapButton.setToolTip("Confirm stream change")
         # tooltip
         self.predictChannelSwapButton.setMinimumSize(50, 40)
@@ -1811,15 +1796,6 @@ class tepmWindow(QMainWindow):
             # shows the browser view
             self.forceBrowserUI = True
             # sets the boolean to True, so the browser doesn't go away
-
-        try:
-        # tries to show window (just in case it gets mad it's already visible)
-            self.show()
-            # shows the window (regardless of status)
-        except:
-        # if it can't show the window (probably already open)
-            None
-            # does nothing
 
 
 
@@ -2301,11 +2277,13 @@ class tepmWindow(QMainWindow):
 
         if action == "Menu":
         # if called for return to menu
-            startApp.exec()
-            # restarts the startApp
-
-        mainApp.exit(1)
-        # quits the main application
+            startWindow.show()
+            # shows the starter window
+            mainWindow.hide()
+            # hides the main window
+        else:
+            app.exit()
+            # closes the app
 
 
 
@@ -2651,7 +2629,7 @@ class tepmWindow(QMainWindow):
                 # enables the bet-related options
                 self.predictStatusLabel.setText("Open Prediction:")
                 self.predictInfoLabel.setText(f"{title}")
-                self.predictDetailLabel.setText(f"Created by: {creator}, started at {predictionStamp}")
+                self.predictDetailLabel.setText(f"Created by {creator}, started at {predictionStamp}")
                 self.predictStatusLabel.setStyleSheet("""
                     QLabel {
                         font-weight: bold;
@@ -2677,7 +2655,7 @@ class tepmWindow(QMainWindow):
                 # if the prediction is locked
                     self.predictStatusLabel.setText("Closed Prediction:")
                     self.predictInfoLabel.setText(f"{title}")
-                    self.predictDetailLabel.setText(f"Created by: {creator}, locked at {predictionStamp}")
+                    self.predictDetailLabel.setText(f"Created by {creator}, locked at {predictionStamp}")
                     self.predictStatusLabel.setStyleSheet("""
                         QLabel {
                             font-weight: bold;
@@ -2696,7 +2674,7 @@ class tepmWindow(QMainWindow):
                 # prediction is resolved (paid out)
                     self.predictStatusLabel.setText("Paid Out Prediction:")
                     self.predictInfoLabel.setText(f"{title}")
-                    self.predictDetailLabel.setText(f"Created by: {creator}, ended at {predictionStamp}")
+                    self.predictDetailLabel.setText(f"Created by {creator}, ended at {predictionStamp}")
                     self.predictStatusLabel.setStyleSheet("""
                         QLabel {
                             font-weight: bold;
@@ -2961,13 +2939,18 @@ class tepmWindow(QMainWindow):
 
 
 
-    def extractAuthToken(self, ok: bool):
+    def extractAuthToken(self):
         """Function to get the auth token from storage"""
 
         if not self.forceBrowserUI:
         # if the force browser boolean isn't true (only true if already ran once)
             self.browserShow.emit(True)
             # tells the browser to hide, but show the UI
+
+        while not self.doneLoading:
+        # if the browser isn't done loading yet
+            QThread.sleep(1)
+            # sleeps for a second to let it load
 
         storedCookies = self.browserView.page().profile().cookieStore()
         # gets the stored cookies
@@ -3009,9 +2992,9 @@ class tepmWindow(QMainWindow):
         # when a cookie gets added, calls the cookieParser
         storedCookies.loadAllCookies()
         # starts loading the cookies in local storage
-
         QTimer.singleShot(5000, self.authValidCheck)
-        # waits 5 seconds, then calls the valid checker
+        # waits 5 seconds, then calls the valid checker 
+        # typically, if the token is valid, it'll be done by this timer
 
 
 
@@ -3148,6 +3131,8 @@ class tepmWindow(QMainWindow):
                 # if there's nothing in the queue
                     time.sleep(5)
                     # sleeps
+                    continue
+                    # resets loop
 
                 if displayWindowSP.poll():
                 # polls the subprocess, if it's alive it won't return anything, otherwise returns a code
@@ -4047,48 +4032,44 @@ def predictionRefresh(event):
     # while the event isn't set
         time.sleep(10)
         # waits 10 seconds
-        window.predictUI()
+        mainWindow.predictUI()
         # calls the predict UI to refresh data
 
 
 
-
-
-### Main Window Startup ###
+### Window Startup ###
 
 
 
-mainApp = QApplication(sys.argv)
-# base app instance (passes command line arguments)
+app = QApplication(sys.argv)
+"""The application"""
 appState = AppState()
 """App state instance to store some variables"""
-window = tepmWindow(appState)
+startWindow = starterWindow()
+"""The starter window"""
+mainWindow = tepmWindow(appState)
 """The main window"""
 
 refreshEvent = threading.Event()
-# an event to stop refreshing if need be
+"""An event to stop refreshing when needed"""
 predictionThread = threading.Thread(target = predictionRefresh, args=(refreshEvent, ), daemon=True)
-# makes a thread for the prediction refreshing
+"""A thread for the prediction refreshing"""
 
 displayQueue = queue.Queue()
 """A queue for display window input"""
 displayLocalEvent = threading.Event()
 """A threading event to stop the details thread"""
-displayLocalThread = threading.Thread(target = window.predictionDetailWindow, args=(displayQueue, ), daemon=True)
+displayLocalThread = threading.Thread(target = mainWindow.predictionDetailWindow, args=(displayQueue, ), daemon=True)
 """A thread just for the prediction window communicator"""
 
 modQueue = queue.Queue()
-# creates a queue for moderator window input
+"""A queue for moderator window input"""
 modEvent = threading.Event()
-# creates a threading event to stop the thread
+"""A threading event to stop the mod view thread"""
 modLocalThread = threading.Thread(target = lambda: print("mod"), args=(modQueue, modEvent, ), daemon=True)
-# a thread just for the moderator window communicator (doesn't exist yet)
+"""A thread just for the moderator window communicator (doesn't exist yet)"""
 
+### Starter Startup ###
 
-
-if canRun:
-# if the "permission slip" is signed, runs the main window
-    startApp.exit(1)
-    # kills the startApp
-    mainApp.exec()
-    # exceutes the app task (runs the QApplication)
+app.exec()
+# starts the application
