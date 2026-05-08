@@ -1,0 +1,20 @@
+{
+    "Channel Point Operation": "ChannelPointsContext",
+    "Channel Point Version": 1,
+    "Channel Point Hash": "7fe050e3761eb2cf258d70ee1a21cbd76fa8cf3d7e7b12fc437e7029d446b5e3",
+    "ChannelID Operation": "ChannelPollContext_GetViewablePoll",
+    "ChannelID Version": 1,
+    "ChannelID Hash": "e83188a3836c636393df3191665e543a03733d7c51d3ade3d85e42aa46c2bf55",
+    "Streak Operation": "RewardList",
+    "Streak Version": 1,
+    "Streak Hash": "0b1471876d7647993731b9e3c6a13bf304c67fb31d07f06a945d42286ee377c4",
+    "Prediction Operation": "ChannelPointsPredictionContext",
+    "Prediction Version": 1,
+    "Prediction Hash": "beb846598256b75bd7c1fe54a80431335996153e358ca9c7837ce7bb83d7d383",
+    "Bet Operation": "MakePrediction",
+    "Bet Version": 1,
+    "Bet Hash": "b44682ecc88358817009f20e69d75081b1e58825bb40aa53d5badcc17c881d8",
+    "Channel Status Operation": "Chat_ChannelData",
+    "Channel Status Version": 1,
+    "Channel Status Hash": "863fda39ddc5ebac7453856eb00af2a587e27f48a2e521e9c01820c3c8c2c18a"
+}

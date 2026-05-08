@@ -1,15 +1,11 @@
 Streak List.json
 Channel Points.csv
-Channel List.txt
-todo.txt
-Data/*
+*.txt
 Test/*
-TEPG.spec
-TEPG.exe
-tepgIcon.png
-resources.qrc
+*.spec
+*.exe
+*.xcf
 build/*
 dist/*
 Release/*
 !.gitignore
-icons/*
