@@ -9,3 +9,5 @@ build/*
 dist/*
 Release/*
 !.gitignore
+.vscode
+temporaryPy.py
