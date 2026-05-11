@@ -1,0 +1,70 @@
+/* Base */
+
+QPushButton {
+    color: white;
+    background-color: #292929;
+    border: 1px solid #303030;
+}
+
+/* Hover */
+
+QPushButton:hover {
+    background-color: #3d3d3d;
+    border: 1px solid #303030;
+}
+
+/* Checked */
+
+QPushButton:checked {
+    background-color: #008d8d;
+    border: 1px solid #303030;
+}
+
+/* Checked + Hover */
+
+QPushButton:checked:hover {
+    background-color: #00a0a0;
+    border: 1px solid #303030;
+}
+
+/* Selected */
+
+QPushButton[state="Selected"] {
+    background-color: #008d8d;
+    border: 1px solid #303030;
+}
+
+/* Selected + Hover */
+
+QPushButton[state="Selected"]:hover {
+    background-color: #00a0a0;
+    border: 1px solid #303030;
+}
+
+/* Selected + Locked */
+
+QPushButton[state="Selected"]:disabled {
+    background-color: #005050;
+    border: 1px solid #303030;
+}
+
+/* Locked */
+
+QPushButton:disabled {
+    background-color: #252525;
+    border: 1px solid #303030;
+}
+
+/* Winner + Locked */
+
+QPushButton[state="Winner"]:disabled {
+    background-color: #005700;
+    border: 1px solid #303030;
+}
+
+/* Loser + Locked */
+
+QPushButton[state="Loser"]:disabled {
+    background-color: #550000;
+    border: 1px solid #303030;
+}

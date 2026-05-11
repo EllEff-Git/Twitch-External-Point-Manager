@@ -1,40 +1,64 @@
 ## Twitch External Point Manager *(TEPM)* 
-### A lightweight Python program to view and manage channel points for any and all channels desired.
+### A Python program to view and manage channel points for any and all channels desired.
 
+<br>
 
-### Runs through the Twitch GraphQL to grab the points balance, streaks and to even handle predictions <br>
+### Current features: 
+- Get channel point balance, streaks or both for any channel (or a list of channels)
+- View prediction details for a single channel
+- Place bets on predictions
 
+### Planned features:
+- A further detail view of predictions (more in-depth point tracking, top predictors, spread visualisation)
+- Saving own bet data to file (to see trends of win/loss / point accumulation over time)
+- A mod view to manage predictions (start, lock, pay out and delete)
+
+<br>
+
+## Download
+### [Download latest](https://github.com/EllEff-Git/Twitch-External-Point-Manager/releases/latest/download/TEPM.zip)
+
+<br>
+
+## Basic Info
+
+#### Runs through the Twitch GraphQL to grab the points balance, streaks and to even handle predictions <br>
 
 #### Login is handled by a QWebEngineView (a built-in browser that's used to store the login locally) <br>
-##### This way there's no need to re-authenticate every time, rather, Twitch handles the authentication itself
 
-
-#### All the information is pushed into a CSV file for easy exporting for a more "user-friendly" viewing experience
+#### All the point/streak information is pushed into a CSV file for easy exporting for a more "user-friendly" viewing experience
 
 <br>
 
-### So, why?
+## So, why?
 
 #### Very first world problem, but I just really hate the default Twitch prediction screen/chat view
+##### Especially with the new UI updates, I can't even see my points when I try to bet...
 #### This program can also show channel points on channels where they're otherwise disabled
-#### Mainly, though, if you're like me and enjoy endless numbers, why not?
+#### Mainly, though, if you're like me and enjoy endless numbers wherever possible, why not?
+##### *Do note that this program does not count as "presence in chat", so you won't earn any points or drops with this tool!*
 
 <br>
 
-### How to use?
+## How to use?
 
-#### 1. Run the program once to create all necessary files and folders
-#### 2. When prompted, enter your Twitch Client ID
-* This can be found by:
-    * -> Browser console (F12 or right click -> "inspect") 
-    * -> "Network" tab
-    * -> type "GQL" in the filter field
-    * -> Click any request 
-    * -> "Headers"
-    * Find "Client-Id" and copy it
-#### 3. Login to Twitch inside the built-in browser view
+#### 1. Start the program to create all necessary files and folders
 
-#### 4. Select a task to perform
-* If you want to check channel points, you'll need to first add the channels into the Channel List.txt file (1x per line, no special characters)
-* After that, save the text file and restart TEPM
+#### 2. Pick a task
+
+#### 3. Login to Twitch inside the browser view
+
+#### 4. Explore other tasks!
+* If you want to check channel points, you'll need to add the channel(s) into the Channel List.txt file (1x per line, no special characters, commas, nothing (it's not case sensitive, but make sure you nail the underscores and such))
+* Just save the file and select any of the point/streak options
+* You can predict without any file modification, just write a streamer's name and hit enter to be greeted with a prediction view!
 #### 5. That's it. There's a small config to tweak things, but otherwise it's just that simple.
+
+<br>
+
+<br>
+
+## Issues, feedback, suggestions?
+
+#### Send me a DM on Discord or make a GitHub issue :)
+##### You can find my Discord by going to [My Website](https://elleffnotelf.com/guides/discord-spotify-integration/) and scrolling all the way to the bottom

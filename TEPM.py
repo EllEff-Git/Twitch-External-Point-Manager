@@ -1,4 +1,4 @@
-import os, sys, requests, datetime, json, re, time, subprocess, uuid
+import os, sys, requests, datetime, json, subprocess, uuid, threading
 # Required program management
 import pandas as pnd
 # Soft required for CSV management (not required, but improves formatting)
@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.9.1517"
+tepmVer = "0.5.11.0652"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -52,6 +52,8 @@ detailWindowPath = os.path.join(dataDir, "TEPMpd.exe")
 """The prediction detail window executable path"""
 modWindowPath = os.path.join(dataDir, "TEPMmv.exe")
 """The prediction mod view window executable path"""
+cssPath = os.path.join(dataDir, "cssStylesheet.qss")
+"""cssStylesheet.qss path"""
 
 
 
@@ -92,6 +94,8 @@ displayWindowBool = False
 
 reqSession = requests.Session()
 """A request session that stores cached request information"""
+rURL = "https://gql.twitch.tv/gql"
+"""The Twitch endpoint to make requests to"""
 
 os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-widevine --enable-gpu --enable-hls --disable-webgpu"
 # environment flags for the chromium webengine (directory stuff, ensures hardware acceleration is on)
@@ -155,9 +159,11 @@ class starterWindow(QWidget):
     ### UI Elements ###
 
         self.mainLayout = QGridLayout()
-        # new grid layout to put elements into
+        """The main layout that contains every sublayout and widget"""
         self.mainLayout.setSpacing(0)
         # removes spacing
+        self.mainLayout.setContentsMargins(20, 20, 20, 20)
+        # sets content margins
 
         self.mainLayout.setRowMinimumHeight(0, 50)
         self.mainLayout.setRowMinimumHeight(1, 100)
@@ -183,7 +189,7 @@ class starterWindow(QWidget):
         # allows row 2 (center) to stretch
 
         self.mainLabel = QLabel()
-        # a label to hold the main information about current process
+        """A label to hold the main information about current process"""
         self.mainLabel.setText("TEPM starter window")
         # initial text
         self.mainLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -200,7 +206,7 @@ class starterWindow(QWidget):
     ### Hideable/Showable Elements ###
 
         self.userInputField = QLineEdit()
-        # creates a new QLineEdit for user to input into
+        """A text field entry for anything"""
         self.userInputField.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # alings to center
         self.userInputField.setFixedSize(300, 30)
@@ -596,7 +602,7 @@ class starterWindow(QWidget):
         self.streakGrabTask.setToolTip("Tasks related to view streaks")
         self.singleGrabTask.setToolTip("Single channel's points and streak")
         self.predictionTask.setToolTip("Opens the prediction view")
-        self.skipToBrowser.setToolTip("Bypass processing and enter the browser\nThis is only really needed for debug")
+        self.skipToBrowser.setToolTip("Bypass processing and enter the browser\nUse this if you want to change Twitch account")
         # tooltips
 
         self.pointGrabTask.setMinimumSize(250, 40)
@@ -885,10 +891,9 @@ class starterWindow(QWidget):
         global overrideChannel, canRun, activeOnly, enableStreaks, enablePoints, predictChannel, browserOnly
         # global -> local
 
-        if not canRun:
-        # if the boolean hasn't been set yet
-            self.configLoaded.emit()
-            # sends signal to inform controller the config is done
+
+        self.configLoaded.emit()
+        # sends signal to inform controller the config is done
 
         try:
         # tries (may "fail")
@@ -987,7 +992,7 @@ class starterWindow(QWidget):
 
         if canRun:
         # if the canRun is already set to True (returning from main)
-            QTimer.singleShot(750, lambda: ctrl.windowSwap("Not Starter"))
+            QTimer.singleShot(750, self.stopper)
             # quits the starter application window with a small delay
         else:
         # if it's not True yet (program start)
@@ -1032,7 +1037,7 @@ class tepmWindow(QWidget):
     browserShow = pyqtSignal(bool)
     # creates a bool signal to check if the browser window should be shown, or a smaller preloader
 
-    def __init__(self, state):
+    def __init__(self, state, passedProfile):
         super().__init__()
 
     ### Init / Basic ###
@@ -1041,11 +1046,6 @@ class tepmWindow(QWidget):
         # stores the app state that holds variables
         self.version = tepmVer
         # stores the version in self
-
-        self.profilePath = profilePath
-        # stores the profile path
-        self.profileName = profileName
-        # stores the profile name
 
         self.channelTxtPath = textPath
         # stores the channels path
@@ -1079,14 +1079,23 @@ class tepmWindow(QWidget):
         """Whether the details window should be alive"""
         self.modWindowBool = False
         """Whether the mod window should be alive"""
-        self.previousEventState = {}
-        """Variable to store the previous event (prediction) map"""
         self.doneLoading = False
         """Boolean to check if browser is done loading"""
+
+        self.currentChannel = None
+        """The currently selected channel, according to predictUpdateUI"""
+        self.currentSize = 0
+        """Stores how many buttons are rendered"""
         self.timerEnd = 0
         """Timer end point for open predictions"""
         self.predictionID = {}
-        """Map to enter the prediction ID information into"""
+        """Map that stores the prediction ID-related info"""
+        self.predictionKeys = {}
+        """Map that stores outcomes and buttons"""
+        self.predictionNumbers = {}
+        """Map that stores prediction numbers (bets, wins, etc)"""
+        self.betValidator = QIntValidator(0, 250000)
+        """Validator to use with the bet line to ensure it fits Twitch's rules"""
 
 
 
@@ -1155,27 +1164,15 @@ class tepmWindow(QWidget):
 
     ### Browser ###
 
-        self.browserProfile = QWebEngineProfile(self.profileName, self)
-        # sets the browser profile to the given profile (default is Default)
-        self.browserProfile.setCachePath(os.path.join(self.profilePath, self.profileName))
-        # sets the cache path (<drive>:/<installation>/Data/Profile/<profileName>/)
-        self.browserPage = QWebEnginePage(self.browserProfile, self.browserView)
-        # creates the engine page with the profile and view parameters
+        self.browserPage = QWebEnginePage(passedProfile, self.browserView)
+        # forms a browser page from the passed profile and the browser view widget
+
         self.browserView.setPage(self.browserPage)
         # sets the page to use the given properties
         self.browserView.setFixedSize(780, 450)
         # caps the browser size
         self.browserView.hide()
         # hides by default
-
-        self.settings = self.browserProfile.settings()
-        # manages the browser settings
-        self.settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        # ensures local storage is enabled 
-        self.settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
-        # ensures plugins are allowed to function
-        self.settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        # ensures javascript is enabled
 
         self.mainLayout.addWidget(self.browserView, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the browser to the layout
@@ -1184,7 +1181,7 @@ class tepmWindow(QWidget):
 
         if not browserOnly:
         # if the browser-only mode isn't enabled
-            ctrl.starterWindowDone.connect(self.extractAuthToken)
+            ctrl.starterWindowDone.connect(self.cssStyleLoader)
             # calls the auth grab when the page is done loading
         else:
         # if the browser-only mode *is* enabled
@@ -1203,14 +1200,101 @@ class tepmWindow(QWidget):
         # calls the auth valid function when pressing the refresh button
         ctrl.taskChange.connect(self.taskLabelChanger)
         # connects the controller signal to the task view changer function
-        
+
+
+
+    ### Point/Streak Grab UI ###
+
+        self.pointGrabLayout = QGridLayout()
+        """A layout that contains the point/streak grab elements"""
+        self.mainLayout.addLayout(self.pointGrabLayout, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to main layout
+        self.pointGrabLayout.setSpacing(30)
+        # sets spacing
+
+        self.progressBar = QProgressBar()
+        """A progress bar for the point/streak grab progress"""
+        self.progressBar.setValue(0)
+        # sets initial progress (starts at 0)
+        self.progressBar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #555;
+                border-radius: 8px;
+                text-align: center;
+                font-weight: bold;
+                height: 25px;
+            }
+
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 6px;
+            }
+        """)
+        # customises the progress bar
+        self.progressBar.setTextVisible(False)
+        # disables the progress bar percentage (using index label)
+        self.progressBar.setFixedSize(QSize(300, 25))
+        # sets the progress bar's size, so that the spacers don't do weird stuff
+        self.progressBar.setToolTip("Current progress")
+        # tooltip
+        self.progressBar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # aligns to center
+        self.progressBar.hide()
+        # hides by default
+
+        self.channelLabel = QLabel()
+        # adds a label for the channel's info text
+        self.channelLabel.setToolTip("Current task")
+        # tooltip
+        self.channelLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.channelLabel.setFixedSize(QSize(300, 30))
+        # sets fixed size
+        self.channelLabel.setWordWrap(True)
+        # allows the text to wrap, if it's too long
+        self.channelLabel.hide()
+        # hides by default
+
+        self.totalLabel = QLabel()
+        # total label (total found points)
+        self.totalLabel.setToolTip("Total point accumulation")
+        # tooltip
+        self.totalLabel.setText("Nothing found yet")
+        # sets initial text
+        self.totalLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.totalLabel.hide()
+        # hides by default
+
+        self.currentLabel = QLabel()
+        # index/progress label
+        self.currentLabel.setToolTip("Progress")
+        # tooltip
+        self.currentLabel.setText(f"0 / {self.channelLength}")
+        # sets initial progress
+        self.currentLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.currentLabel.hide()
+        # hides by default
+
+        self.pointGrabLayout.addWidget(self.channelLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.pointGrabLayout.addWidget(self.progressBar, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.pointGrabLayout.addWidget(self.totalLabel, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.pointGrabLayout.addWidget(self.currentLabel, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all the items to the layout
+
+        self.pointGrabStopLayout = QGridLayout()
+        """A layout to store the Menu / Exit buttons in point grab mode"""
+        self.pointGrabLayout.addLayout(self.pointGrabStopLayout, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to the main point grab layout
+
 
 
     ### Predict UI ###
 
         self.predictLayout = QGridLayout()
         """A layout for the predictions"""
-        self.mainLayout.addLayout(self.predictLayout, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addLayout(self.predictLayout, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to main layout
 
 
@@ -1219,7 +1303,7 @@ class tepmWindow(QWidget):
 
         self.predictInfoLayout = QGridLayout()
         """A nested layout that hosts basic information about the prediction(s)"""
-        self.predictInfoLayout.setSpacing(35)
+        self.predictInfoLayout.setSpacing(25)
         # adds a little more spacing
         self.predictLayout.addLayout(self.predictInfoLayout, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # top middle
@@ -1231,7 +1315,7 @@ class tepmWindow(QWidget):
         self.predictInfoLayout.addLayout(self.predictDetailLayout, 2, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # under the basic info, above the buttons
 
-        self.predictChannelLabel = QLabel()
+        self.predictChannelLabel = QLabel(" ")
         """A label that holds the current channel name"""
         self.predictChannelLabel.setToolTip("Currently selected channel")
         # tooltip
@@ -1244,25 +1328,7 @@ class tepmWindow(QWidget):
         self.predictInfoLayout.addWidget(self.predictChannelLabel, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the layout (top middle)
 
-        self.predictPointLabel = QLabel()
-        """A label that holds the current channel's point balance"""
-        self.predictPointLabel.setToolTip("Current balance for this channel")
-        # tooltip
-        self.predictPointLabel.setStyleSheet("""
-            QLabel {
-                font-weight: bold;
-                font-style: italic;
-                font-size: 19px;
-                color: #0DD141;
-            }
-        """)
-        # style sheet
-        self.predictPointLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # centers the text
-        self.predictPointLabel.hide()
-        # hides by default
-
-        self.predictStatusLabel = QLabel()
+        self.predictStatusLabel = QLabel(" ")
         """A label that holds the prediction status (active, locked, paid out, refunded)"""
         self.predictStatusLabel.setToolTip("Prediction status")
         # tooltip
@@ -1276,7 +1342,7 @@ class tepmWindow(QWidget):
         self.predictStatusLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
 
-        self.predictInfoLabel = QLabel()
+        self.predictInfoLabel = QLabel(" ")
         """A label that holds the prediction name"""
         self.predictInfoLabel.setToolTip("Prediction name")
         # tooltip
@@ -1291,7 +1357,7 @@ class tepmWindow(QWidget):
         self.predictInfoLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
 
-        self.predictDetailLabel = QLabel()
+        self.predictDetailLabel = QLabel(" ")
         """A label that holds the prediction details (creator, timestamp)"""
         self.predictDetailLabel.setToolTip("Prediction details")
         # tooltip
@@ -1316,7 +1382,7 @@ class tepmWindow(QWidget):
         self.predictTimerLabel.hide()
         # hides by default
 
-        self.predictPoolLabel = QLabel()
+        self.predictPoolLabel = QLabel(" ")
         """A label that holds the total pool info"""
         self.predictPoolLabel.setStyleSheet("""
             QLabel {
@@ -1331,8 +1397,8 @@ class tepmWindow(QWidget):
         self.predictPoolLabel.hide()
         # hides by default
 
-        self.predictResultLabel = QLabel("Bet amount")
-        """A label that holds the result or bet"""
+        self.predictResultLabel = QLabel("Prediction result")
+        """A label that holds the result"""
         self.predictResultLabel.setToolTip("Prediction Outcome")
         # tooltip
         self.predictResultLabel.setStyleSheet("""
@@ -1349,7 +1415,7 @@ class tepmWindow(QWidget):
         self.predictResultLabel.hide()
         # hides by default
 
-        self.predictTaskLabel = QLabel("Current Task")
+        self.predictTaskLabel = QLabel(" ")
         """A label that holds the current task result/string"""
         self.predictTaskLabel.setStyleSheet("""
             QLabel {
@@ -1367,8 +1433,6 @@ class tepmWindow(QWidget):
         self.predictTaskLabel.hide()
         # hides by default
 
-        self.predictInfoLayout.addWidget(self.predictPointLabel, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds it to the 1st nested layout (middle middle)
         self.predictInfoLayout.addWidget(self.predictTaskLabel, 3, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds task label between the prediction details layout and the outcome layout (details and buttons)
 
@@ -1392,126 +1456,463 @@ class tepmWindow(QWidget):
 
     ### Predict Button/Point Layout ###
 
-        self.predictOutcomeLayout = QGridLayout()
+        self.predictOutcomeLayout = QHBoxLayout()
         """A nested layout that hosts the bet selectors and point totals"""
-        self.predictOutcomeLayout.setVerticalSpacing(15)
+        self.predictOutcomeLayout.setSpacing(15)
         # sets lower spacing
+        self.predictOutcomeLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # aligns center
         self.predictInfoLayout.addLayout(self.predictOutcomeLayout, 4, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the info layout (under the labels)
 
+    ### Predict Outcome 1 ###
 
+        self.predictOutcome1 = QWidget()
+        """A QWidget to hold the option 1 elements"""
+        self.predictOutcome1Layout = QVBoxLayout()
+        """A vertical layout to hold option 1 elements"""
+        self.predictOutcome1.setLayout(self.predictOutcome1Layout)
+        # sets layout
 
-    ### Predict Outcome Selections ###
+        self.predictPayout1 = QLabel("0x")
+        """Prediction option 1 payout multiplier label"""
+        self.predictPayout1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout1.setToolTip("Prediction outcome multiplier")
+        # top label 1
 
-        self.predictOption1 = QPushButton()
+        self.predictOption1 = QPushButton(" ")
         """Prediction option 1 button"""
-        self.predictOption1.setMinimumSize(90, 40)
         self.predictOption1.setToolTip("Outcome 1")
-        # option 1
-
-        self.predictOption2 = QPushButton()
-        """Prediction option 2 button"""
-        self.predictOption2.setMinimumSize(90, 40)
-        self.predictOption2.setToolTip("Outcome 2")
-        # option 2
-
-        self.predictOption3 = QPushButton()
-        """Prediction option 3 button"""
-        self.predictOption3.setMinimumSize(90, 40)
-        self.predictOption3.setToolTip("Outcome 3")
-        # option 3
-
-        self.predictOption4 = QPushButton()
-        """Prediction option 4 button"""
-        self.predictOption4.setMinimumSize(90, 40)
-        self.predictOption4.setToolTip("Outcome 4")
-        # option 4
-
-        self.predictOption5 = QPushButton()
-        """Prediction option 5 button"""
-        self.predictOption5.setMinimumSize(90, 40)
-        self.predictOption5.setToolTip("Outcome 5")
-        # option 5
-
-        self.predictOutcomeLayout.addWidget(self.predictOption1, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictOption2, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictOption3, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictOption4, 0, 3, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictOption5, 0, 4, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to layout
-
-        self.predictOption1.hide()
-        self.predictOption2.hide()
-        self.predictOption3.hide()
-        self.predictOption4.hide()
-        self.predictOption5.hide()
-        # hides options by default
-
-        self.predictOptions = [self.predictOption1, self.predictOption2, self.predictOption3, self.predictOption4, self.predictOption5]
-        """A list of prediction option buttons"""
-
-        self.buttonGroup = QButtonGroup()
-        """A group of prediction buttons"""
-        self.buttonGroup.setExclusive(True)
-        # sets exclusive (only one can be on at once)
-        for button in self.predictOptions:
-        # goes through each button in the list of buttons
-            button.setCheckable(True)
-            # makes them toggleable
-            self.buttonGroup.addButton(button)
-            # adds the button to the group
-
-        self.buttonGroup.buttonClicked.connect(self.predictButtonManager)
-        # connects any button press to the manager
-
-
-
-    ### Predict Outcome Labels ###
+        # bet option 1
 
         self.predictPoints1 = QLabel("0")
         """Prediction option 1 point pool label"""
         self.predictPoints1.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.predictPoints1.setToolTip("Prediction outcome details")
-        # label 1
+        # bottom label 1
+
+        self.predictOutcome1Layout.addWidget(self.predictPayout1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome1Layout.addWidget(self.predictOption1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome1Layout.addWidget(self.predictPoints1, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome1)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 2 ###
+
+        self.predictOutcome2 = QWidget()
+        """A QWidget to hold the option 2 elements"""
+        self.predictOutcome2Layout = QVBoxLayout()
+        """A vertical layout to hold option 2 elements"""
+        self.predictOutcome2.setLayout(self.predictOutcome2Layout)
+        # sets layout
+
+        self.predictPayout2 = QLabel("0x")
+        """Prediction option 2 payout multiplier label"""
+        self.predictPayout2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout2.setToolTip("Prediction outcome multiplier")
+        # top label 2
+
+        self.predictOption2 = QPushButton(" ")
+        """Prediction option 2 button"""
+        self.predictOption2.setToolTip("Outcome 2")
+        # bet option 2
+
         self.predictPoints2 = QLabel("0")
-        """Prediction option 1 point pool label"""
+        """Prediction option 2 point pool label"""
         self.predictPoints2.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.predictPoints2.setToolTip("Prediction outcome details")
-        # label 2
+        # bottom label 2
+
+        self.predictOutcome2Layout.addWidget(self.predictPayout2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome2Layout.addWidget(self.predictOption2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome2Layout.addWidget(self.predictPoints2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome2)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 3 ###
+
+        self.predictOutcome3 = QWidget()
+        """A QWidget to hold the option 3 elements"""
+        self.predictOutcome3Layout = QVBoxLayout()
+        """A vertical layout to hold option 3 elements"""
+        self.predictOutcome3.setLayout(self.predictOutcome3Layout)
+        # sets layout
+
+        self.predictPayout3 = QLabel("0x")
+        """Prediction option 3 payout multiplier label"""
+        self.predictPayout3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout3.setToolTip("Prediction outcome multiplier")
+        # top label 3
+
+        self.predictOption3 = QPushButton(" ")
+        """Prediction option 3 button"""
+        self.predictOption3.setToolTip("Outcome 3")
+        # bet option 3
+
         self.predictPoints3 = QLabel("0")
-        """Prediction option 1 point pool label"""
+        """Prediction option 3 point pool label"""
         self.predictPoints3.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.predictPoints3.setToolTip("Prediction outcome details")
-        # label 3
+        # bottom label 3
+
+        self.predictOutcome3Layout.addWidget(self.predictPayout3, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome3Layout.addWidget(self.predictOption3, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome3Layout.addWidget(self.predictPoints3, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome3)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 4 ###
+
+        self.predictOutcome4 = QWidget()
+        """A QWidget to hold the option 4 elements"""
+        self.predictOutcome4Layout = QVBoxLayout()
+        """A vertical layout to hold option 4 elements"""
+        self.predictOutcome4.setLayout(self.predictOutcome4Layout)
+        # sets layout
+
+        self.predictPayout4 = QLabel("0x")
+        """Prediction option 4 payout multiplier label"""
+        self.predictPayout4.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout4.setToolTip("Prediction outcome multiplier")
+        # top label 4
+
+        self.predictOption4 = QPushButton(" ")
+        """Prediction option 4 button"""
+        self.predictOption4.setToolTip("Outcome 4")
+        # bet option 4
+
         self.predictPoints4 = QLabel("0")
-        """Prediction option 1 point pool label"""
+        """Prediction option 4 point pool label"""
         self.predictPoints4.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.predictPoints4.setToolTip("Prediction outcome details")
-        # label 4
+        # bottom label 4
+
+        self.predictOutcome4Layout.addWidget(self.predictPayout4, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome4Layout.addWidget(self.predictOption4, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome4Layout.addWidget(self.predictPoints4, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome4)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 5 ###
+
+        self.predictOutcome5 = QWidget()
+        """A QWidget to hold the option 5 elements"""
+        self.predictOutcome5Layout = QVBoxLayout()
+        """A vertical layout to hold option 5 elements"""
+        self.predictOutcome5.setLayout(self.predictOutcome5Layout)
+        # sets layout
+
+        self.predictPayout5 = QLabel("0x")
+        """Prediction option 5 payout multiplier label"""
+        self.predictPayout5.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout5.setToolTip("Prediction outcome multiplier")
+        # top label 5
+
+        self.predictOption5 = QPushButton(" ")
+        """Prediction option 5 button"""
+        self.predictOption5.setToolTip("Outcome 5")
+        # bet option 5
+
         self.predictPoints5 = QLabel("0")
-        """Prediction option 1 point pool label"""
+        """Prediction option 5 point pool label"""
         self.predictPoints5.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.predictPoints5.setToolTip("Prediction outcome details")
-        # label 5
-        
-        self.predictOutcomeLayout.addWidget(self.predictPoints1, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictPoints2, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictPoints3, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictPoints4, 1, 3, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictOutcomeLayout.addWidget(self.predictPoints5, 1, 4, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to layout
+        # bottom label 5
 
-        self.predictPoints1.hide()
-        self.predictPoints2.hide()
-        self.predictPoints3.hide()
-        self.predictPoints4.hide()
-        self.predictPoints5.hide()
-        # hides points by default
+        self.predictOutcome5Layout.addWidget(self.predictPayout5, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome5Layout.addWidget(self.predictOption5, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome5Layout.addWidget(self.predictPoints5, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
 
-        self.predictPoints = [self.predictPoints1, self.predictPoints2, self.predictPoints3, self.predictPoints4, self.predictPoints5]
-        """A list of prediction point pool labels"""
+        self.predictOutcomeLayout.addWidget(self.predictOutcome5)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 6 ###
+
+        self.predictOutcome6 = QWidget()
+        """A QWidget to hold the option 6 elements"""
+        self.predictOutcome6Layout = QVBoxLayout()
+        """A vertical layout to hold option 6 elements"""
+        self.predictOutcome6.setLayout(self.predictOutcome6Layout)
+        # sets layout
+
+        self.predictPayout6 = QLabel("0x")
+        """Prediction option 6 payout multiplier label"""
+        self.predictPayout6.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout6.setToolTip("Prediction outcome multiplier")
+        # top label 6
+
+        self.predictOption6 = QPushButton(" ")
+        """Prediction option 6 button"""
+        self.predictOption6.setToolTip("Outcome 6")
+        # bet option 6
+
+        self.predictPoints6 = QLabel("0")
+        """Prediction option 6 point pool label"""
+        self.predictPoints6.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPoints6.setToolTip("Prediction outcome details")
+        # bottom label 6
+
+        self.predictOutcome6Layout.addWidget(self.predictPayout6, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome6Layout.addWidget(self.predictOption6, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome6Layout.addWidget(self.predictPoints6, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome6)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 7 ###
+
+        self.predictOutcome7 = QWidget()
+        """A QWidget to hold the option 7 elements"""
+        self.predictOutcome7Layout = QVBoxLayout()
+        """A vertical layout to hold option 7 elements"""
+        self.predictOutcome7.setLayout(self.predictOutcome7Layout)
+        # sets layout
+
+        self.predictPayout7 = QLabel("0x")
+        """Prediction option 7 payout multiplier label"""
+        self.predictPayout7.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout7.setToolTip("Prediction outcome multiplier")
+        # top label 7
+
+        self.predictOption7 = QPushButton(" ")
+        """Prediction option 7 button"""
+        self.predictOption7.setToolTip("Outcome 7")
+        # bet option 7
+
+        self.predictPoints7 = QLabel("0")
+        """Prediction option 7 point pool label"""
+        self.predictPoints7.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPoints7.setToolTip("Prediction outcome details")
+        # bottom label 7
+
+        self.predictOutcome7Layout.addWidget(self.predictPayout7, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome7Layout.addWidget(self.predictOption7, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome7Layout.addWidget(self.predictPoints7, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome7)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 8 ###
+
+        self.predictOutcome8 = QWidget()
+        """A QWidget to hold the option 8 elements"""
+        self.predictOutcome8Layout = QVBoxLayout()
+        """A vertical layout to hold option 8 elements"""
+        self.predictOutcome8.setLayout(self.predictOutcome8Layout)
+        # sets layout
+
+        self.predictPayout8 = QLabel("0x")
+        """Prediction option 8 payout multiplier label"""
+        self.predictPayout8.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout8.setToolTip("Prediction outcome multiplier")
+        # top label 8
+
+        self.predictOption8 = QPushButton(" ")
+        """Prediction option 8 button"""
+        self.predictOption8.setToolTip("Outcome 8")
+        # bet option 8
+
+        self.predictPoints8 = QLabel("0")
+        """Prediction option 8 point pool label"""
+        self.predictPoints8.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPoints8.setToolTip("Prediction outcome details")
+        # bottom label 8
+
+        self.predictOutcome8Layout.addWidget(self.predictPayout8, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome8Layout.addWidget(self.predictOption8, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome8Layout.addWidget(self.predictPoints8, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome8)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 9 ###
+
+        self.predictOutcome9 = QWidget()
+        """A QWidget to hold the option 9 elements"""
+        self.predictOutcome9Layout = QVBoxLayout()
+        """A vertical layout to hold option 9 elements"""
+        self.predictOutcome9.setLayout(self.predictOutcome9Layout)
+        # sets layout
+
+        self.predictPayout9 = QLabel("0x")
+        """Prediction option 9 payout multiplier label"""
+        self.predictPayout9.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout9.setToolTip("Prediction outcome multiplier")
+        # top label 9
+
+        self.predictOption9 = QPushButton(" ")
+        """Prediction option 9 button"""
+        self.predictOption9.setToolTip("Outcome 9")
+        # bet option 9
+
+        self.predictPoints9 = QLabel("0")
+        """Prediction option 9 point pool label"""
+        self.predictPoints9.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPoints9.setToolTip("Prediction outcome details")
+        # bottom label 9
+
+        self.predictOutcome9Layout.addWidget(self.predictPayout9, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome9Layout.addWidget(self.predictOption9, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome9Layout.addWidget(self.predictPoints9, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome9)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome 10 ###
+
+        self.predictOutcome10 = QWidget()
+        """A QWidget to hold the option 10 elements"""
+        self.predictOutcome10Layout = QVBoxLayout()
+        """A vertical layout to hold option 10 elements"""
+        self.predictOutcome10.setLayout(self.predictOutcome10Layout)
+        # sets layout
+
+        self.predictPayout10 = QLabel("0x")
+        """Prediction option 10 payout multiplier label"""
+        self.predictPayout10.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPayout10.setToolTip("Prediction outcome multiplier")
+        # top label 10
+
+        self.predictOption10 = QPushButton(" ")
+        """Prediction option 10 button"""
+        self.predictOption10.setToolTip("Outcome 10")
+        # bet option 10
+
+        self.predictPoints10 = QLabel("0")
+        """Prediction option 10 point pool label"""
+        self.predictPoints10.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.predictPoints10.setToolTip("Prediction outcome details")
+        # bottom label 10
+
+        self.predictOutcome10Layout.addWidget(self.predictPayout10, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome10Layout.addWidget(self.predictOption10, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictOutcome10Layout.addWidget(self.predictPoints10, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all elements to layout
+
+        self.predictOutcomeLayout.addWidget(self.predictOutcome10)
+        # adds the overall widget to the layout
+
+    ### Predict Outcome Lists ###
+
+        self.predictOutcomeWidgets = [self.predictOutcome1, self.predictOutcome2, self.predictOutcome3,
+                                    self.predictOutcome4, self.predictOutcome5, self.predictOutcome6,
+                                    self.predictOutcome7, self.predictOutcome8, self.predictOutcome9,
+                                    self.predictOutcome10]
+        """A list of prediction betting widgets (host the top/bottom labels + button)"""
+
+        self.predictMultipliers = [self.predictPayout1, self.predictPayout2, self.predictPayout3, self.predictPayout4,
+                                self.predictPayout5, self.predictPayout6, self.predictPayout7, self.predictPayout8,
+                                self.predictPayout9, self.predictPayout10]
+        """A list of prediction payout labels (top)"""
+
+        self.predictButtonList = [self.predictOption1, self.predictOption2, self.predictOption3, 
+                               self.predictOption4, self.predictOption5, self.predictOption6,
+                               self.predictOption7, self.predictOption8, self.predictOption9, self.predictOption10]
+        """A list of prediction option buttons"""
+
+        self.predictPoints = [self.predictPoints1, self.predictPoints2, self.predictPoints3, self.predictPoints4, 
+                            self.predictPoints5, self.predictPoints6, self.predictPoints7, self.predictPoints8,
+                            self.predictPoints9, self.predictPoints10]
+        """A list of prediction point pool labels (bottom)"""
+
+    ### Outcome Widget Policing ###
+
+        for outcome in self.predictOutcomeWidgets:
+        # goes through each widget
+            outcome.setSizePolicy(
+                QSizePolicy.Policy.Fixed,
+                QSizePolicy.Policy.Fixed
+            )
+            # sets a size policy
+            outcome.hide()
+            # hides the widget by default
+
+    ### Bet Button Grouping ###
+
+        self.buttonGroup = QButtonGroup()
+        """A group of prediction buttons"""
+        self.buttonGroup.setExclusive(True)
+        # sets exclusive (only one can be on at once)
+
+        for button in self.predictButtonList:
+        # goes through each button in the list of buttons
+            button.setMinimumSize(100, 40)
+            # sets minimum size
+            button.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Fixed
+            )
+            # sets the sizes to ideally match the largest
+            button.setCheckable(True)
+            # makes them toggleable
+            button.setStyleSheet("""
+                QPushButton {
+                    padding: 2px 5px;
+                }
+            """)
+            # adds padding inside (2 top/bot, 5 left/right)
+            self.buttonGroup.addButton(button)
+            # adds the button to the group
 
     
+
+    ### Bet / Balance ###
+
+        self.channelPointLayout = QGridLayout()
+        """A layout that holds the current bet and balance labels"""
+        self.channelPointLayout.setVerticalSpacing(10)
+        # smaller spacing than most
+        self.predictInfoLayout.addLayout(self.channelPointLayout, 5, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to the higher up prediction layout
+
+        self.currentBetLabel = QLabel("Current Bet")
+        """A label that holds the current bet amount (total per channel)"""
+        self.currentBetLabel.setToolTip("Total bet for this prediction in this channel")
+        # tooltip
+        self.currentBetLabel.setMinimumSize(350, 50)
+        # min size
+        self.currentBetLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.currentBetLabel.hide()
+        # hides by default
+        
+        self.predictPointLabel = QLabel(" ")
+        """A label that holds the current channel's point balance"""
+        self.predictPointLabel.setToolTip("Current balance for this channel")
+        # tooltip
+        self.predictPointLabel.setStyleSheet("""
+            QLabel {
+                font-weight: bold;
+                font-style: italic;
+                font-size: 19px;
+                color: #0DD141;
+            }
+        """)
+        # style sheet
+        self.predictPointLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.predictPointLabel.hide()
+        # hides by default
+
+        self.channelPointLayout.addWidget(self.predictPointLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds it to the channel point layout (below the bet pools/buttons)
+        self.channelPointLayout.addWidget(self.currentBetLabel, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to the main info layout below the balance
+
+
 
     ### Predict Actions ###
 
@@ -1525,7 +1926,7 @@ class tepmWindow(QWidget):
         self.predictSuperLayout.addLayout(self.predictBetLayout, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds into the super layout in the middle (col 1)
 
-        self.predictBetSpacer = QSpacerItem(200, 35)
+        self.predictBetSpacer = QSpacerItem(200, 5)
         """Spacer that pushes the bet buttons down"""
 
         self.predictAmountLine = QLineEdit()
@@ -1536,7 +1937,7 @@ class tepmWindow(QWidget):
         # aligns text to the center
         self.predictAmountLine.setPlaceholderText("Bet Amount (max: 250,000)")
         # sets background text
-        self.predictAmountLine.setValidator(QIntValidator(0, 250000))
+        self.predictAmountLine.setValidator(self.betValidator)
         # sets a validator to only accept digits with a max bet of 250000
         self.predictAmountLine.setMinimumSize(200, 40)
         # min size
@@ -1545,28 +1946,28 @@ class tepmWindow(QWidget):
         """Confirm bet button"""
         self.predictBetButton.setToolTip("Confirm bet")
         # tooltip
-        self.predictBetButton.setMinimumSize(50, 40)
+        self.predictBetButton.setMinimumSize(70, 40)
         # min size
 
         self.maxBetButton = QPushButton("Max")
         """Button to bet max amount"""
         self.maxBetButton.setToolTip("Set max bet (requires confirmation)")
         # tooltip
-        self.maxBetButton.setMinimumSize(50, 40)
+        self.maxBetButton.setMinimumSize(70, 40)
         # min size
 
         self.modButton = QPushButton("Mod View")
         """Button to open mod view"""
         self.modButton.setToolTip("Open moderator view tab")
         # tooltip
-        self.modButton.setMinimumSize(60, 40)
+        self.modButton.setMinimumSize(80, 40)
         # min size
 
         self.detailsButton = QPushButton("Details")
         """Button to display further information about the bet"""
         self.detailsButton.setToolTip("Display more information about the prediction")
         # tooltip
-        self.detailsButton.setMinimumSize(60, 40)
+        self.detailsButton.setMinimumSize(80, 40)
         # min size
         self.detailsButton.hide()
         # hides by default
@@ -1618,7 +2019,7 @@ class tepmWindow(QWidget):
         """Change the channel (button)"""
         self.predictChannelSwapButton.setToolTip("Confirm stream change")
         # tooltip
-        self.predictChannelSwapButton.setMinimumSize(50, 40)
+        self.predictChannelSwapButton.setMinimumSize(70, 40)
         # min size
 
         self.predictChannelLayout.addWidget(self.predictChannelLine, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -1642,16 +2043,16 @@ class tepmWindow(QWidget):
 
         self.stopLayout = QGridLayout()
         """A layout that contains the Main and Exit buttons"""
-        self.stopLayout.setSpacing(30)
+        self.stopLayout.setHorizontalSpacing(35)
         # 30 px gaps
-        self.mainLayout.addLayout(self.stopLayout, 5, 0)
+        self.mainLayout.addLayout(self.stopLayout, 4, 0)
         # adds the layout at the very bottom location
         
         self.menuButton = QPushButton("Menu")
         """A button to return to the menu"""
         self.menuButton.setToolTip("Return to the main menu\nCloses this window to reopen the starter")
         # tooltip
-        self.menuButton.setMinimumSize(125, 50)
+        self.menuButton.setMinimumSize(150, 50)
         # size
         self.menuButton.hide()
         # hides by default
@@ -1660,7 +2061,7 @@ class tepmWindow(QWidget):
         """A button to Exit"""
         self.exitButton.setToolTip("Quit the application")
         # tooltip
-        self.exitButton.setMinimumSize(125, 50)
+        self.exitButton.setMinimumSize(150, 50)
         # size
         self.exitButton.hide()
         # hides by default
@@ -1676,14 +2077,27 @@ class tepmWindow(QWidget):
 
 
 
-    ### Prediction Element Lists ###
+    ### Element Lists ###
 
         self.activePredictionElements = [self.predictTimerLabel]
         """A list of elements exclusive to the active prediction style"""
+
         self.lockedPredictionElements = []
         """A list of elements exclusive to the locked prediction style"""
+
         self.resolvedPredictionElements = [self.predictResultLabel]
         """A list of elements exclusive to the resolved prediction style"""
+
+        self.pointItems = [self.progressBar, self.channelLabel, self.totalLabel, self.currentLabel]
+        """A list of point grab elements"""
+
+        self.predictItems = [self.predictChannelLabel, self.predictStatusLabel, self.predictInfoLabel,
+                            self.predictDetailLabel, self.predictTimerLabel, self.predictPoolLabel,
+                            self.predictResultLabel, self.predictTaskLabel, self.currentBetLabel,
+                            self.predictPointLabel, self.predictAmountLine, self.predictBetButton,
+                            self.maxBetButton, self.modButton, self.detailsButton, self.predictChannelLine,
+                            self.predictChannelSwapButton]
+        """A list of prediction elements"""
 
 
 
@@ -1721,84 +2135,22 @@ class tepmWindow(QWidget):
 
     def headlessUI(self):
         """A function to add the headless UI layout widgets"""
-        try:
-        # tries to add new items
-            self.topSpacer = QSpacerItem(100, 25)
-            # spacer to keep the text from going way too far up
-
-            self.progressBar = QProgressBar()
-            self.progressBar.setValue(0)
-            # sets initial progress (starts at 0)
-            self.progressBar.setStyleSheet("""
-                QProgressBar {
-                    border: 2px solid #555;
-                    border-radius: 8px;
-                    text-align: center;
-                    font-weight: bold;
-                    height: 25px;
-                }
-
-                QProgressBar::chunk {
-                    background-color: #4CAF50;
-                    border-radius: 6px;
-                }
-            """)
-            # customises the progress bar
-            self.progressBar.setTextVisible(False)
-            # disables the progress bar percentage (using index label)
-            self.progressBar.setFixedSize(QSize(300, 25))
-            # sets the progress bar's size, so that the spacers don't do weird stuff
-            self.progressBar.setToolTip("Current progress")
-            # tooltip
-            self.progressBar.hide()
-            # hides the progress bar by default
-
-            self.channelLabel = QLabel()
-            # adds a label for the channel's info text
-            self.channelLabel.setToolTip("Current task")
-            # tooltip
-            self.channelLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # centers the text
-            self.channelLabel.setFixedSize(QSize(300, 30))
-            # sets fixed size
-            self.channelLabel.setWordWrap(True)
-            # allows the text to wrap, if it's too long
-
-            self.totalLabel = QLabel()
-            # total label (total found points)
-            self.totalLabel.setToolTip("Total point accumulation")
-            # tooltip
-            self.totalLabel.setText("Nothing found yet")
-            # sets initial text
-            self.totalLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # centers the text
-
-            self.currentLabel = QLabel()
-            # index/progress label
-            self.currentLabel.setToolTip("Progress")
-            # tooltip
-            self.currentLabel.setText(f"0 / {self.channelLength}")
-            # sets initial progress
-            self.currentLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # centers the text
-
-        except:
-        # fails (already exist)
-            None
-            # does nothing
 
         if enablePoints and not enableStreaks:
         # if the point grabbing is enabled, streaks disabled
             self.channelLabel.setText("Starting point grabber...")
             # sets initial text
+
         elif not enablePoints and enableStreaks:
         # if the point grabbing is disabled, streaks enabled
             self.channelLabel.setText("Starting streak grabber...")
             # sets initial text
+
         elif predictChannel:
         # if there's a predict channel set
             self.channelLabel.setText("Starting prediction manager...")
             # sets initial text
+
         else:
         # something else?
             self.channelLabel.setText("Starting grabber...")
@@ -1806,26 +2158,25 @@ class tepmWindow(QWidget):
 
         if predictChannel:
         # if a predict channel is set
+            self.progressBar.hide()
             self.totalLabel.hide()
             self.currentLabel.hide()
-            # hides both labels (unused)
-        elif not overrideChannel:
-        # if the override channel isn't set (doesn't really need a progress bar, 1/1)
+            # hides both point/streak labels + progress bar
+
+        elif overrideChannel:
+        # if the override channel is set (doesn't really need a progress bar, 1/1)
+            self.totalLabel.hide()
+            self.currentLabel.hide()
+            self.progressBar.hide()
+            # hides both point/streak labels + progress bar
+
+        elif not predictChannel and not overrideChannel:
+        # if predictChannel and override aren't set (must be a list)
             self.progressBar.show()
-            # enables the progress bar
-        elif not predictChannel:
-        # if predictChannel isn't set (override or multiple channels)
             self.channelLabel.show()
             self.totalLabel.show()
             self.currentLabel.show()
-            # shows the items (just in case they were hidden)
-
-        self.mainLayout.addItem(self.topSpacer, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.mainLayout.addWidget(self.channelLabel, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.mainLayout.addWidget(self.progressBar, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.mainLayout.addWidget(self.totalLabel, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.mainLayout.addWidget(self.currentLabel, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds all the items to the layout
+            # shows the items
 
 
 
@@ -1846,7 +2197,7 @@ class tepmWindow(QWidget):
         dictType = progressDict["type"]
         # the type of dictionary sent (full or single)
 
-        if dictType == "full":
+        if dictType == "Full":
         # if the dictionary is a full one (going through a list of channels)
 
             channel = progressDict["channel"]
@@ -2079,7 +2430,7 @@ class tepmWindow(QWidget):
             self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
             # sets the current channel index string
         
-        elif dictType == "single":
+        elif dictType == "Single":
         # if the dictionary is a single channel
             channel = progressDict["channel"]
             # the channel name (str)
@@ -2106,16 +2457,11 @@ class tepmWindow(QWidget):
             self.progressBar.setValue(100)
             # sets the progress bar value
 
-        elif dictType == "predict":
-        # if the dictionary is about predictions
-            self.channelLabel.setText("")
-            # sets the text to match
-
 
 
 ### Progress Done ###
 
-    def progressDone(self, errors: int, streak: int, expiryList: list=None):
+    def progressDone(self, errors: int, streak: int, expiryList: list=None, points: int=None):
         """A function to change the headless UI into completion mode"""
 
         preFinalText = self.totalLabel.text()
@@ -2157,23 +2503,36 @@ class tepmWindow(QWidget):
             expiryString = f"Channels with expiring streaks: {", ".join(expiryList)}"
             # turns the list into a string
 
-        if errors > 0:
-        # if there was at least one error
-            finalString = (
-                        f"All channels scoured - stats have been saved to CSV!\n\n"
-                        f"TEPM was unable to store points for {errors} out of {len(self.channels)} channels\n\n"
-                        f"{expiryString}\n\n"
-                        f"Feel free to exit, thank you for using TEPM <3\n"
-                        )
-            # forms final string with error count
+        if not overrideChannel:
+        # if override channel wasn't set
+            if errors > 0:
+            # if there was at least one error
+                finalString = (
+                            f"All channels scoured - stats have been saved to CSV!\n\n"
+                            f"TEPM was unable to store points for {errors} out of {len(self.channels)} channels\n\n"
+                            f"{expiryString}\n\n"
+                            f"Feel free to exit, thank you for using TEPM <3\n"
+                            )
+                # forms final string with error count
+            else:
+            # if there were no errors
+                finalString = (
+                            f"All channels scoured - stats have been saved to CSV!\n\n"
+                            f"{expiryString}\n\n"
+                            f"Feel free to exit, thank you for using TEPM <3\n"
+                            )
+                # forms final string with no errors
         else:
-        # if there were no errors
-            finalString = (
-                        f"All channels scoured - stats have been saved to CSV!\n\n"
-                        f"{expiryString}\n\n"
-                        f"Feel free to exit, thank you for using TEPM <3\n"
-                        )
-            # forms final string with no errors
+        # if override channel was set
+            if errors == 0:
+            # no errors
+                finalString = f"{points} points and a streak of {streak} for {overrideChannel}"
+                # forms final string
+            else:
+            # error
+                finalString = f"Couldn't get points or streak for {overrideChannel}"
+                # forms final string with error
+
         self.channelLabel.setText(finalString)
         # final UI update with the formed string
         self.currentLabel.deleteLater()
@@ -2219,6 +2578,7 @@ class tepmWindow(QWidget):
         # hides the task viewer
         self.refreshTokenButton.hide()
         # hides the refresh button
+
         try:
         # tries
             self.browserView.hide()
@@ -2231,17 +2591,18 @@ class tepmWindow(QWidget):
         if predictChannel:
         # if the prediction channel is set
 
-            self.setMinimumSize(850, 800)
-            self.resize(850, 800)
+            self.setMinimumSize(850, 900)
+            self.resize(850, 900)
             # the window size
 
-            self.predictUI("Init")
-            # initialises the predict UI
+            self.swapMainUI("Predict")
+            # swaps the elements
 
         else:
         # if the prediction channel isn't set
-            self.headlessUI()
-            # adds the headless UI widgets to layout
+
+            self.swapMainUI("Points")
+            # swaps the elements
 
             self.mainLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             # centers everything to middle
@@ -2254,6 +2615,66 @@ class tepmWindow(QWidget):
 
 
 
+### Swap UI ###
+
+    def swapMainUI(self, action:str):
+        """Function that swaps the UI layout between predict and point/streak grab"""
+
+        if action == "Predict":
+        # prediction UI activate
+            for element in self.pointItems:
+                element.hide()
+                # hides the point elements
+            for element in self.predictItems:
+                element.show()
+                # shows the prediction base elements
+            for element in self.predictPoints:
+                element.show()
+                # shows the prediction point pools
+
+            try:
+                self.pointGrabStopLayout.removeWidget(self.menuButton)
+                self.pointGrabStopLayout.removeWidget(self.exitButton)
+                # removes the buttons from the point grab layout
+                self.stopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+                self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+                # adds them to the stop layout (prediction UI)
+            except:
+                print("Couldn't swap to predict")
+
+            self.predictUI("Init")
+            # calls the prediction UI to start
+   
+        else:
+        # point grab UI activate
+            for element in self.predictItems:
+                element.hide()
+                # hides the prediction base elements
+            for element in self.predictPoints:
+                element.hide()
+                # hides the prediction point pools
+            for element in self.predictOutcomeWidgets:
+                element.hide()
+                # hides the prediction bet options
+            for element in self.pointItems:
+                element.show()
+                # shows the point elements
+
+            try:
+                self.stopLayout.removeWidget(self.menuButton)
+                self.stopLayout.removeWidget(self.exitButton)
+                # removes the buttons from the stop layout (prediction UI)
+                self.pointGrabStopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+                self.pointGrabStopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+                # adds them to the point grab layout
+            except:
+                print("Couldn't swap to points")
+
+            self.headlessUI()
+            # calls the headless UI to start
+
+
+
 ### Prediction UI ###
 
     def predictUI(self, action:str = None):
@@ -2263,27 +2684,10 @@ class tepmWindow(QWidget):
 
         if action == "Init":
         # init action
-            self.predictAmountLine.show()
-            self.predictBetButton.show()
-            self.predictChannelLine.show()
-            self.predictChannelSwapButton.show()
-            self.maxBetButton.show()
-            self.modButton.show()
-            self.detailsButton.show()
-            self.predictChannelLabel.show()
-            self.predictPointLabel.show()
-            self.predictInfoLabel.show()
-            self.predictDetailLabel.show()
-            self.predictPoolLabel.show()
-            self.predictStatusLabel.show()
-            self.predictTaskLabel.show()
-            # enables all the buttons
-
             ctrl.predictWorkerStart()
             # starts the predict/balance refresh thread loop
-
             self.eop()
-            # calls end of program to show menu and exit buttons
+            # calls "end of program" to show menu and exit buttons
             
         elif action == "Swap":
         # if user pressed swap button
@@ -2296,6 +2700,10 @@ class tepmWindow(QWidget):
             else:
                 predictChannel = newChannel
                 # grabs the name of the channel from the line, changes global var to match
+                self.predictChannelLine.setText("")
+                # resets the text
+                ctrl.predictionTimerOverride.emit()
+                # sends a signal to override the timer and get a data refresh right away
 
 
 
@@ -2343,11 +2751,58 @@ class tepmWindow(QWidget):
 
 
 
+### Prediction Data -> Update Bet Label ###
+
+    def betLabelUpdater(self, text:str, color:str=None):
+        """Function to change the current bet label"""
+
+        self.currentBetLabel.setText(text)
+        # sets the text from parameter
+
+        if color == "Green":
+            self.currentBetLabel.setStyleSheet("""
+                QLabel {
+                    color: #0DD141;
+                    font-style: italic;
+                    font-size: 14px;
+                }
+            """)
+            # default style (green text)
+        elif color == "Red":
+        # bet loss
+            self.currentBetLabel.setStyleSheet("""
+                QLabel {
+                    color: #820C04;
+                    font-style: italic;
+                    font-size: 14px;
+                }
+            """)
+            # loss style (red text)
+        # elif color == "White":
+
+
+
+### Screen Resize ###
+
+    def screenResize(self, buttonCount: int):
+        """Resizes screen based on active # of buttons"""
+        
+        buttonWidth = 140
+        # how wide one button should count as (px)
+        newSize = max(900, int(buttonCount * buttonWidth))
+        # calculates a new size for the screen width (to fit buttons), picks the larger width from 900 and (x*y)
+
+        self.setMinimumSize(850, newSize)
+        self.resize(850, newSize)
+        # the window size
+
+
+
 ### Prediction -> UI Update ###
 
     def predictUpdateUI(self, prediction: dict):
         """Function to update UI based on prediction/balance data"""
-        global predictionChannel
+        global predictChannel
         # global -> local
 
         totalPoints = 0
@@ -2358,8 +2813,8 @@ class tepmWindow(QWidget):
         if prediction["success"]:
         # if it was a success
 
-            oldID = self.previousEventState.get("id", None)
-            oldType = self.previousEventState.get("type", None)
+            oldID = self.predictionID.get("lastID", None)
+            oldType = self.predictionID.get("lastType", None)
             # grabs the old ID and type to compare
 
             eventID = prediction["id"]
@@ -2367,14 +2822,12 @@ class tepmWindow(QWidget):
             eventType = prediction["type"]
             # grabs the event type (active, locked, resolved)
 
-            if prediction["balance"]:
-            # if the prediction balance is returned and not False (or empty)
-                self.predictChannelPoints = int(prediction["balance"])
-                # sets the balance to match
-                self.predictPointLabel.setText(f"Balance: {self.predictChannelPoints} points")
-                # update the balance label
-                self.predictPointLabel.show()
-                # enables the label (if it was hidden)
+            self.predictChannelPoints = prediction.get("balance", 0)
+            # sets the balance to match (default 0 if not found)
+            self.predictPointLabel.setText(f"Balance: {self.predictChannelPoints:,.0f} points")
+            # update the balance label
+            self.predictPointLabel.show()
+            # enables the label (if it was hidden)
 
             if (oldID == eventID) and (oldType == eventType):
             # if the IDs match and the types match (same dictionary)
@@ -2382,57 +2835,66 @@ class tepmWindow(QWidget):
                 # changes the boolean to prevent full update
             else:
             # not the same data
-                self.previousEventState["id"] = eventID
-                self.previousEventState["type"] = eventType
+                self.predictionID["lastID"] = eventID
+                self.predictionID["lastType"] = eventType
                 # copies the new values over so they can be compared next time
 
-                if prediction["caseName"]:
-                # if the case sensitive name is set
-                    predictionChannel = prediction["caseName"]
-                    # reassigns the predictionChannel to match the case sensitive one
-                    self.predictChannelLabel.setText(predictChannel)
-                    # sets the text of the channel label to match channel
-                    self.predictChannelLabel.show()
-                    # enables the label (if it was hidden)
+            if prediction.get("caseName", False):
+            # if the case sensitive name is set
+                predictChannel = prediction["caseName"]
+                # reassigns the predictionChannel to match the case sensitive one
+                self.predictChannelLabel.setText(predictChannel)
+                # sets the text of the channel label to match channel
+                self.predictChannelLabel.show()
+                # enables the label (if it was hidden)
+            
+            if not (predictChannel == self.currentChannel):
+            # if the channel being operated on is NOT the current channel stored here
+                self.currentChannel = predictChannel
+                # updates current channel
+                shouldUpdate = True
+                # forces full UI update
 
-            listOfElementLists = [self.predictOptions, self.predictPoints, self.predictInfoItems]
+            timeNow = datetime.datetime.now().astimezone().strftime("%#H:%M:%S")
+            # grabs current time and formats it
+            self.predictTaskLabel.setText(f"Last update: {timeNow}")
+            # sets the task indicator to indicate the task that has been tasked
+
+            listOfElementLists = [self.predictOutcomeWidgets, self.predictInfoItems]
             # list of element lists
-
             if shouldUpdate:
-            # if there's new data (hides these to prevent misleading data (new channel, old data))
+            # if there's new data (hides these to prevent misleading data (new channel, old data) + to reset button count)
                 for elementList in listOfElementLists:
                 # goes through each list of elements
                     for item in elementList:
                         # goes through each element in the list
                             try:
+                            # tries
                                 item.hide()
-                                # tries to hide it
+                                # hides the element
                             except:
+                            # on fail
                                 pass
                                 # does nothing
                 
-            if eventType == "active":
-            # if the active predict list has more than 0 elements
-                self.predictionID = {}
-                # clears the map on success
-                self.predictionID["eventID"] = eventID
-                # sets the event ID in the map
+                if eventType == "active":
+                # if the active predict list has more than 0 elements
 
-                localTime = prediction["localTS"]
-                # grabs the local timestamp (still in datetime format)
-                timer = int((prediction["timer"]) - 2)
-                # grabs the prediction timer (-2 due to delay)
-                self.timerEnd = localTime + datetime.timedelta(seconds=timer)
-                # calculates the end of the timer, stores in self
-                labelTimer = QTimer()
-                # sets up a QTimer
+                    localTime = prediction["localTS"]
+                    # grabs the local timestamp (still in datetime format)
+                    timer = int((prediction["timer"]) - 2)
+                    # grabs the prediction timer (-2 due to delay)
+                    self.timerEnd = localTime + datetime.timedelta(seconds=timer)
+                    # calculates the end of the timer, stores in self
+                    self.labelTimer = QTimer()
+                    # sets up a QTimer
 
-                labelTimer.timeout.connect(self.predictionTimer)
-                # connects the timer "timeout" (interval ending)
-                self.predictionTimer()
-                # runs the first update
-                labelTimer.start(1000)
-                # starts it with an interval of 1000ms (1s)
+                    self.labelTimer.timeout.connect(self.predictionTimer)
+                    # connects the timer "timeout" (interval ending)
+                    self.predictionTimer()
+                    # runs the first update
+                    self.labelTimer.start(1000)
+                    # starts it with an interval of 1000ms (1s)
 
             title = prediction["title"]
             # grabs the prediction title
@@ -2442,128 +2904,245 @@ class tepmWindow(QWidget):
             # grabs the creator name
             timestamp = prediction["timestamp"]
             # grabs the timestamp
+            ownVoteID = prediction["votedOutcome"]
+            # gets the outcome user (may have) voted for
+            ownVoteSum = int(prediction["votedSum"])
+            # gets the amount user (may have) voted with
+            ownVoteWin = prediction["sumWon"]
+            # gets the total won points (null until resolved)
+            storedVoteDict = self.predictionNumbers.get(eventID, {"bet": 999999})
+            # grabs the stored dictionary from prediction numbers (falls back to dict with bet = 999999 if doesn't exist
+
+            if not (ownVoteSum == storedVoteDict["bet"]):
+            # if the vote sum doesn't match the previously stored vote
+                shouldUpdate = True
+                # sets the boolean to True so the UI gets fully updates
+                self.predictionNumbers[eventID] = {"bet": ownVoteSum, "option": ownVoteID}
+                # stores the bet and voted outcome in the dictionary with the eventID as key
+
+            if not ownVoteID:
+            # no vote ID = no bet (it already gets checked in grab to be for *this* event)
+                self.currentBetLabel.hide()
+                # hides the label
+            else:
+            # vote ID = vote in this event
+                self.currentBetLabel.show()
+                # shows the label
+
+            for x in range(len(outcomes)):
+            # goes through each outcome again (needs to do it 2x because first need the total points for labeling)
+                optionPoints = outcomes[x]["totalPoints"]
+                # gets the points given to the option
+                totalPoints += int(optionPoints)
+                # adds the points to the total
+
+            self.predictionKeys[eventID] = {}
+            # creates a keymap for this event (or clears)
+
+            buttonCount = 0
+            # starts a counter for buttons
 
             for x in range (len(outcomes)):
             # goes through each option
                 optionName = outcomes[x]["title"]
                 # gets the name of the option
                 optionID = outcomes[x]["id"]
-                # gets the outcome ID 
+                # gets the outcome ID
+
+                if ownVoteID == optionID:
+                # if the user vote matches this vote
+                    self.predictionID[eventID] = {"title": optionName, "id": optionID}
+                    # stores the name and ID of the outcome voted for, in this event
+
                 optionPoints = outcomes[x]["totalPoints"]
                 # gets the points given to the option
-                totalUsers = outcomes[x]["totalUsers"]
+                optionUsers = outcomes[x]["totalUsers"]
                 # gets the users that went in on the option
 
-                optionX = self.predictOptions[x]
-                # grabs the xth option
-                optionX.show()
-                # enables the option
-                optionX.setText(optionName)
+                if totalPoints > 0:
+                # if there's more than 0 points in the total pool
+                    pointShare = ((optionPoints / totalPoints) * 100)
+                    # gets the share of points out of the total (decimal, converts to %)
+                else:
+                # if not
+                    pointShare = 0
+                    # the share is 0 of 0
+
+                buttonX = self.predictButtonList[x]
+                # grabs the xth bet button
+                buttonX.setText(optionName)
                 # sets the option name to match
 
-                if eventType == "active":
-                # if the prediction is active
-                    optionX.setEnabled(True)
-                    # enables the button
-                else:
-                # if not (locked/resolved)
-                    optionX.setEnabled(False)
-                    # disables the button
-
-                optionString = f"{optionPoints:,.0f} points\n{totalUsers:,.0f} users"
-                # forms a string 
-
                 pointsX = self.predictPoints[x]
-                # grabs the xth option
-                pointsX.show()
-                # enables the label
+                # grabs the xth pool label
+                optionString = f"{optionPoints:,.0f} points\n({pointShare:.0f}%)\n{optionUsers:,.0f} users"
+                # forms a string 
                 pointsX.setText(optionString)
                 # sets the label to match
 
-                self.predictionID[optionID] = optionX
-                # stores a reference to the buttons by the outcome ID (so that later it can check which button won)
-                
-                totalPoints += int(optionPoints)
-                # adds the points to the total
+                payoutX = self.predictMultipliers[x]
+                # grabs the xth payout label
+                if optionPoints > 0:
+                # if the option has more than 0 points
+                    payout = (totalPoints / optionPoints)
+                    # calculates the payout multiplier
+                else:
+                # if it doesn't (then technically the payout is 1:1 (0 -> 0)
+                    payout = 1
+                    # sets to 1
+                payoutX.setText(f"{payout:.2f}x")
+                # sets the multiplier with 2 decimal precision
 
-            self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points")
-            # sets the total pool label
-            
-            if not shouldUpdate:
-            # if the boolean is set to false (no need to update further)
-                return
-                # stops
-            
-            if eventType == "active":
-            # if the prediction is active
-                self.maxBetButton.setEnabled(True)
-                self.predictBetButton.setEnabled(True)
-                self.predictAmountLine.setEnabled(True)
-                # enables the bet-related options
-                self.predictLabelUpdater("Open Prediction:", f"{title}", f"{creator}, started at {timestamp}", "green", "Active")
-                # calls the updater to change UI
-                ctrl.timerSwap.emit(5)
-                # if the event is active, speeds up update timer to get more data quicker
+                self.predictOutcomeWidgets[x].show()
+                # enables the xth widget (label + button + label)
 
+                self.predictionKeys[eventID][optionID] = buttonX
+                self.predictionKeys[eventID][buttonX] = optionID
+                # stores the outcome and button as keys:values for each other
+
+                buttonCount += 1
+                # adds 1
+
+            if buttonCount >= 6 and buttonCount != self.currentSize:
+            # if there's more than or eq to 6 buttons (7 * 140 > 900, 6 will be the default size)
+            # also compares against current size to avoid resizing every time this is ran
+                self.currentSize = buttonCount
+                # sets the current size
+                self.screenResize(buttonCount)
+                # calls the resizer with the count, to set a larger screen
+
+            if ownVoteID:
+            # if user voted in this event
+                voteShare = ((ownVoteSum / totalPoints) * 100)
+                # calculates user's share of the total pool in percentages
+                self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points\nYour share: {voteShare:.0f}%")
+                # sets text with user share %
             else:
-            # prediction isn't active (locked/resolved)
-                self.maxBetButton.setEnabled(False)
-                self.predictBetButton.setEnabled(False)
-                self.predictAmountLine.setEnabled(False)
-                # disables the bet-related options
+            # user did not vote in this event
+                self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points")
+                # sets the total pool label
+            
+            if shouldUpdate:
+            # if the boolean is set to True (means the event status or bet has changed)
 
-                if eventType == "locked":
-                # if the prediction is locked
-                    self.predictLabelUpdater("Closed Prediction:", f"{title}", f"{creator}, closed at {timestamp}", "orange", "Locked")
+                if eventType == "active":
+                # if the prediction is active
+                    self.maxBetButton.setEnabled(True)
+                    self.predictBetButton.setEnabled(True)
+                    self.predictAmountLine.setEnabled(True)
+                    # enables the bet-related options
+                    self.predictLabelUpdater("Open Prediction:", f"{title}", f"{creator}, started {timestamp}", "green", "Active")
                     # calls the updater to change UI
-                    ctrl.timerSwap.emit(20)
-                    # if the event is locked, slows the updater down to ~normal speed
+
+                    if ownVoteID:
+                    # if user voted
+                        betString = f"Current bet: {ownVoteSum:,.0f} on {self.predictionID[eventID]["title"]}"
+                        # forms a string to indicate bet
+                        self.betLabelUpdater(betString, "Green")
+                        # updates bet label
+                        self.currentBetLabel.show()
+                        # unhides
+                        buttonToSelect = self.predictionKeys[eventID][ownVoteID]
+                        # gets the stored option ID's (voted outcome ID) linked button identifier
+                        self.predictButtonManager("Lock", buttonToSelect)
+                        # calls to lock the option selection buttons
+                    else:
+                    # user didn't vote yet
+                        self.predictButtonManager("Init")
+                        # calls for the buttons to get unlocked/reset
+
+                    ctrl.timerSwap.emit(3)
+                    # if the event is active, speeds up update timer to get more data quicker
 
                 else:
-                # prediction is resolved (paid out)
-                    self.predictLabelUpdater("Paid Out Prediction:", f"{title}", f"{creator}, ended at {timestamp}", "orange", "Resolved")
-                    # calls the updater to change UI
-                    ctrl.timerSwap.emit(30)
-                    # if the event is resolved, slows the updater way down
+                # prediction isn't active (locked/resolved)
+                    self.maxBetButton.setEnabled(False)
+                    self.predictBetButton.setEnabled(False)
+                    self.predictAmountLine.setEnabled(False)
+                    # disables the bet-related options
 
-                    winOutcomeDict = prediction["winner"]
-                    # gets the winning outcome dictionary, otherwise uses set dictionary
-                    winOutcomeID = winOutcomeDict["id"]
-                    # grabs the winning ID
-                    winOutcomeTitle = winOutcomeDict["title"]
-                    # grabs the winning title
+                    if eventType == "locked":
+                    # if the prediction is locked
+                        self.predictLabelUpdater("Closed Prediction:", f"{title}", f"{creator}, closed {timestamp}", "orange", "Locked")
+                        # calls the updater to change UI
 
-                    # need to check if user bet on this event
-                    if self.predictionID.get("status", False):
-                    # if there's a status, means user did bet
-                        betStatus = self.predictionID["status"]
-                        # grabs the status
-                        betAmount = betStatus["bet"]
-                        # gets the amount bet
-                        betOutcomeID = betStatus["outcome"]
-                        # grabs the outcome user voted for 
+                        if ownVoteID:
+                        # if user voted
+                            betWin = ((ownVoteSum * self.predictionKeys[eventID][ownVoteID]) - ownVoteSum)
+                            # gets the potential bet win
+                            betString = f"You bet {ownVoteSum:,.0f} on {self.predictionID[eventID]["title"]}\n(+{betWin:,.0f} on win)"
+                            # forms a string to indicate bet
+                            self.betLabelUpdater(betString, "Green")
+                            # sets text to match
+                            self.currentBetLabel.show()
+                            # unhides
+                            self.predictButtonManager("Lock", self.predictionKeys[eventID][ownVoteID])
+                            # calls to lock the option selection buttons
+                        else:
+                        # user didn't vote
+                            self.predictButtonManager("Lock")
+                            # calls to lock everything
+                    
+                        ctrl.timerSwap.emit(10)
+                        # if the event is locked, slows the updater down to ~normal speed
+
+                    else:
+                    # prediction is resolved (paid out)
+                        self.predictLabelUpdater("Paid Out Prediction:", f"{title}", f"{creator}, ended {timestamp}", "orange", "Resolved")
+                        # calls the updater to change UI
+                        ctrl.timerSwap.emit(10)
+                        # if the event is resolved, slows the updater way down
+
+                        winOutcomeDict = prediction["winner"]
+                        # gets the winning outcome dictionary, otherwise uses set dictionary
+                        winOutcomeID = winOutcomeDict["id"]
+                        # grabs the winning ID
+                        winOutcomeTitle = winOutcomeDict["title"]
+                        # grabs the winning title
+
+                        print("Winning outcome (wait for refund):", winOutcomeDict)
 
                         if winOutcomeID == "refund":
-                        # if win outcome is a refund
+                        # if outcome is a refund
                             self.predictResultLabel.setText(f"Prediction was refunded!")
                             # text if prediction was refunded
+                            self.betLabelUpdater(" ")
+                            # ensures the bet is cleared
+                            self.predictButtonManager("Init")
+                            # clears the status', unlocks buttons
                         else:
-                        # can't get winning button if it's refunded
-                            self.predictButtonManager("Winner")
-                            # calls the predict button manager to highlight the winning button in green
+                        # if the outcome is anything else
+                            if ownVoteID:
+                            # if user voted
+                                self.predictButtonManager("Winner", self.predictionKeys[eventID][ownVoteID])
+                                # calls the predict button manager with the map[ID] (to get the button object) to highlight the winning button in green
 
-                            if betOutcomeID == winOutcomeID:
-                            # if the stored outcome is the same as the winner
-                                self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!\nYou win y points with a bet of {betAmount} points")
-                                # text if user bet and won
+                                if ownVoteID == winOutcomeID:
+                                # if the stored outcome is the same as the winner
+                                    self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
+                                    # text if user bet and won
+                                    newPoints = (ownVoteWin - ownVoteSum)
+                                    # gets the amount of points won (gained)
+                                    newPointsPercent = ((newPoints / ownVoteSum) * 100)
+                                    # gets the percentage of bet that the new points amount to
+                                    winString = f"You won {ownVoteWin:,.0f} points with a bet of {ownVoteSum:,.0f} points! (+{(newPoints):,.0f} / {newPointsPercent:.1f}%)"
+                                    # forms win string
+                                    self.betLabelUpdater(winString, "Green")
+                                    # bet label update
+                                else:
+                                # if the stored is not the same
+                                    self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
+                                    # text if user bet and lost
+                                    self.betLabelUpdater(f"You lost {ownVoteSum:.0f} points", "Red")
+                                    # bet label update
                             else:
-                            # if the stored is not the same
-                                self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!\nYou unfortunately lost {betAmount} points")
-                                # text if user bet and lost
-                    else:
-                    # no status, no bet
-                        self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
-                        # text if user did not bet
+                            # no status, no bet
+                                self.predictButtonManager("Winner", self.predictionKeys[eventID][winOutcomeID])
+                                # calls the predict button manager to highlight winner in green
+                                self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
+                                # text if user did not bet
+                                self.betLabelUpdater(" ")
+                                # bet label update
 
             if self.detailsWindowBool:
             # if the display window bool is True (details view is on)
@@ -2579,7 +3158,11 @@ class tepmWindow(QWidget):
 
         else:
         # if it wasn't a success
-            self.predictTaskLabel.setText(f"Failed to get prediction details for {predictChannel}")
+            self.predictTimerLabel.hide()
+            self.currentBetLabel.hide()
+            self.predictResultLabel.hide()
+            # these should be off 
+            self.predictTaskLabel.setText(f"Failed to get prediction details for {predictChannel}!")
             # changes the text to inform
 
 
@@ -2589,11 +3172,8 @@ class tepmWindow(QWidget):
     def predictIntermediary(self):
         """Sits between the bet button and makePrediction"""
 
-        print("made it to intermediary")
-
-        if not self.betMasker():
-        # runs betmasker before, if it returns False
-            print("bet masker false")
+        if not self.betMasker("Check"):
+        # runs betmasker before, checks if it returns False
             return
             # stops (betMasker already sets a reason)
 
@@ -2601,8 +3181,6 @@ class tepmWindow(QWidget):
         # starts as None
         selectedButton = self.buttonGroup.checkedButton()
         # sets the selected button as the option
-
-        print("SELECTED:", selectedButton)
 
         try:
         # tries to get the text
@@ -2622,20 +3200,26 @@ class tepmWindow(QWidget):
             optionName = selectedButton.text()
             # grabs the text of the button
             try:
-                eventID = self.predictionID["eventID"]
-                # grabs the event ID from the map
-                outcomeID = self.predictionID[selectedButton]
-                # grabs the outcome ID linked to that option
+                eventID = self.predictionID["lastID"]
+                # grabs the event ID from the ID map
+                outcomeID = self.predictionKeys[eventID][selectedButton]
+                # grabs the outcome ID linked to that option from the key map
             except:
                 outcomeID = None
                 # sets to none
-            
-            print("OUTCOME ID", outcomeID)
+
+            currentBet = self.predictionNumbers.get(eventID, {"option": None})["option"]
+            # grabs the current voted outcome ID 
 
             if outcomeID:
             # if outcomeID is defined (didn't fail, was set correctly)
-                ctrl.predictMaker.emit(bet, eventID, selectedButton, optionName)
-                # calls the pyQt signal with the details (bet int, outcomeID)
+                if currentBet == outcomeID or not currentBet:
+                # if there's already a bet with this outcome or no bet set yet
+                    ctrl.predictMaker.emit(bet, eventID, outcomeID, optionName)
+                    # calls the pyQt signal with the details (bet int, outcomeID)
+                else:
+                    self.predictTaskLabel.setText("Cannot bet on two outcomes!")
+                    # user inform
             else:
             # if it wasn't defined (either didn't get set properly or failed to grab)
                 self.predictTaskLabel.setText(f"Failed to send bet due to internal error!")
@@ -2693,52 +3277,80 @@ class tepmWindow(QWidget):
 
 ### Prediction Buttons ###
 
-    def predictButtonManager(self, action: str = None):
+    def predictButtonManager(self, action: str = None, passedButton = None):
         """Function to ensure the buttons only have one active at one time"""
 
         selectedButton = self.buttonGroup.checkedButton()
         # grabs the button that's checked and sets as selected
-        
-        if selectedButton:
-        # if "state" is true, something should be on
-           for button in self.predictOptions:
-            # goes through every button
-                if action == "Init" or action == None:
-                # startup
-                    if button == selectedButton:
-                    # if the button is the selected one
-                        button.setStyleSheet("background-color: #404040;")
-                        # sets the selected button a lighter color
-                    else:
-                    # not selected
-                        button.setStyleSheet("background-color: #181818;")
-                        # sets the button background darker
 
-                elif action == "Winner":
-                # choosing winning outcome
-                    if button == selectedButton:
-                    # if the button is the selected one
-                        button.setStyleSheet("background-color: green;")
-                        # sets the selected button green
-                    else:
-                    # not selected
-                        button.setStyleSheet("background-color: red;")
-                        # sets the button red
-        else:
-        # no selected buttons
-            for button in self.predictOptions:
-            # goes through the list
-                button.setStyleSheet("background-color: #181818")
-                # sets a darker color
+        if not selectedButton:
+        # if none are checked
+            if passedButton:
+            # if the button argument is defined
+                selectedButton = passedButton
+                # sets the selected button from button
+
+        for button in self.predictButtonList:
+        # goes through every button
+
+            if action == "Winner":
+            # choosing winning outcome
+                if button == selectedButton:
+                # if the button is the selected one
+                        button.setProperty("state", "Winner")
+                        # sets the property to winner
+                        button.style().unpolish(button)
+                        button.style().polish(button)
+                        button.update()
+                        # refreshes the button style
+                else:
+                    button.setProperty("state", "Loser")
+                    # sets the property to loser
+                    button.style().unpolish(button)
+                    button.style().polish(button)
+                    button.update()
+                    # refreshes the button style
+                button.setEnabled(False)
+                # buttons disabled because no bet active yet
+
+            elif action == "Init" or action == "Lock":
+            # startup / lock
+                if button == selectedButton:
+                # if the button is the selected one
+                        button.setProperty("state", "Selected")
+                        # sets the property to selected
+                        button.style().unpolish(button)
+                        button.style().polish(button)
+                        button.update()
+                        # refreshes the button style
+                else:
+                # not selected
+                        button.setProperty("state", None)
+                        # empties property
+                        button.style().unpolish(button)
+                        button.style().polish(button)
+                        button.update()
+                        # refreshes / clears the style
+
+                if action == "Init":
+                # startup / reset
+                    button.setEnabled(True)
+                    # buttons should be on by default
+                else:
+                # lock
+                    button.setEnabled(False)
+                    # buttons turned off when locked (can't change bet once confirmed)
 
 
 
 ### modCheck ###
 
-    def modCheck(self):
+    def modCheck(self) -> bool:
         """Checks if user is moderator before allowing mod view open"""
+
         userData = statusGrabber(self.state, predictChannel)
         # calls status grabber with the state and current channel
+
         if userData["success"]:
         # operation successful
             if userData["mod"]:
@@ -2747,14 +3359,20 @@ class tepmWindow(QWidget):
                 # calls the window starter
                 self.predictTaskLabel.setText("Moderator view is not yet implemented")
                 # temp
+                return True
+                # a mod
             else:
             # user is not a mod
                 self.predictTaskLabel.setText("No moderator status in this channel")
                 # no mod inform
+                return False
+                # not a mod
         else:
         # operation not successful
             self.predictTaskLabel.setText("Could not get moderator status, can't open view")
             # user inform
+            return False
+            # something went wrong, can't auth
 
 
 
@@ -2772,12 +3390,15 @@ class tepmWindow(QWidget):
             currentBet = 0
             # sets to 0
 
-        print("bet:", currentBet)
+        if currentBet == 0 and action != "Max":
+        # if the bet is 0 (not a max bet request)
+            self.predictTaskLabel.setText("Cannot bet 0 points")
+            # user inform
+            return
+            # stops
 
         currentBal = self.predictChannelPoints
         # grabs the balance from the variable
-
-        print("balance:", currentBal)
 
         if action == "Max":
         # if it calls to enter max points
@@ -2786,13 +3407,11 @@ class tepmWindow(QWidget):
                 self.predictAmountLine.setText(f"{currentBal}")
                 # all in
             else:
-            # user has > 250k
+            # user has >= 250k
                 self.predictAmountLine.setText("250000")
                 # sets Twitch max bet
-
         else:
         # if it doesn't call for max
-
             if currentBet > currentBal:
             # if the bet is larger than the current balance
                 self.predictTaskLabel.setText("Bet cannot exceed balance!")
@@ -2800,15 +3419,30 @@ class tepmWindow(QWidget):
                 self.predictAmountLine.setText(currentBal)
                 # enforces the max bet
 
-                if action == "check":
+                if action == "Check":
                 # if this is a check request
                     return False
                     # returns False (wasn't valid)
 
-            if action == "check":
+            if action == "Check":
             # if this is a check request
                 return True
                 # returns True (is valid)
+
+
+
+### Style Loader ###
+
+    def cssStyleLoader(self):
+        """Function that loads the CSS stylesheet"""
+
+        with open(cssPath, "r") as seess:
+        # opens the CSS stylesheet
+            self.setStyleSheet(seess.read())
+            # sets the stylesheet for the class
+
+        self.extractAuthToken()
+        # calls the next stage
 
 
 
@@ -2907,6 +3541,8 @@ class tepmWindow(QWidget):
             except:
                 None
 
+
+
 ### Prediction Timer ###
 
     def predictionTimer(self):
@@ -2920,6 +3556,10 @@ class tepmWindow(QWidget):
         # if the time left is less than a second
             self.predictTimerLabel.setText("00:00")
             # sets end
+            self.labelTimer.stop()
+            # stops the timer
+            self.labelTimer.deleteLater()
+            # deletes current timer
             return
             # stops
         
@@ -2950,7 +3590,8 @@ class tepmWindow(QWidget):
         layoutsToClear = [self.mainLayout, self.predictInfoLayout, 
                           self.predictDetailLayout, self.predictOutcomeLayout, 
                           self.predictSuperLayout, self.predictBetLayout, 
-                          self.predictLayout, self.stopLayout, self.predictChannelLayout]
+                          self.predictLayout, self.stopLayout, 
+                          self.predictChannelLayout, self.channelPointLayout]
         # list of layouts to hide items in
 
         for layout in layoutsToClear:
@@ -2972,18 +3613,15 @@ class tepmWindow(QWidget):
                     except:
                     # if it can't (already hidden?)
                         pass
-                layout.hide
             except:
             # fail usually just means an item was deleted unexpectedly (which is fine)
                 None
                 # does nothing
 
-        self.menuButton.hide()
-        self.exitButton.hide()
-        # hides the nav buttons
-
         self.uiStyle()
         # calls the uistyle function to reset the UI
+        self.channels = self.getChannelList()
+        # calls the get channel list to update the channels (prediction, override, file...)
 
 
 
@@ -3044,6 +3682,8 @@ class tepmWindow(QWidget):
 
         self.pointThread = QThread()
         # creates a new thread
+        self.pointThread.setObjectName("Point Grabber Thread")
+        # object name (debug)
         self.pointWorker = PointWorker(self.state, self.channels)
         # creates a worker with the state, channel list
 
@@ -3068,14 +3708,66 @@ class tepmWindow(QWidget):
 
 
 
+### Channel ID Grab ###
+
+def channelIDGrab(state, channel):
+    """A function to grab the channelID"""
+    global reqSession
+
+    authToken = state.authToken
+    # gets the authorisation token from the app state variable
+
+    headers = {
+            "Client-Id": hashMap["ClientID"],
+            "Authorization": f"OAuth {authToken}",
+    }
+    # forms the headers used to dictate the data request type
+
+    idPayload = {
+        # forms a payload just for the ID
+            "operationName": hashMap["ChannelID Operation"],
+            # this was the first operation I found that has a return for the ID without requesting with the ID
+            "variables": {
+                "login": channel,
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "sha256Hash": hashMap["ChannelID Hash"],
+                    # the hash for the operation, may change
+                    "version": int(hashMap["ChannelID Version"])
+                    # the hash version
+                }
+            }
+        }
+
+    idRequest = reqSession.post(rURL, json = idPayload, headers = headers)
+    # makes request to get the 
+    idData = idRequest.json()
+    # stores the resulting data json
+
+    try:
+    # attempts to access the returned json
+        if idData and idData["data"]:
+        # if there's a return package and the package has "data"
+            channelID = idData["data"]["channel"]["id"]
+            # grabs the channel ID from the returned data package
+            return {"success": True, "channelID": channelID}
+            # returns the channel ID
+        else:
+            return {"success": False, "error": "ChannelID not found"}
+            # returns failure dict
+    except:
+    # if it can't access/fails at 
+        return {"success": False, "error": "ChannelID failure"}
+        # returns a failure dict
+
+
+
 ### Point Grabber ###
 
 def pointGrabber(state, channel: str) -> dict:
     """The function that grabs the channel points via GraphQL"""
     global reqSession
-
-    rURL = "https://gql.twitch.tv/gql"
-    # the endpoint to make requests to
 
     authToken = state.authToken
     # gets the authorisation token from the app state variable
@@ -3111,12 +3803,14 @@ def pointGrabber(state, channel: str) -> dict:
     # tries to read the received data file
         if data and data["data"]:
         # checks if the data package is valid and that there's a header for "data"
-            points = data["data"]["community"]["channel"]["self"]["communityPoints"]
+            pointData = data["data"]["community"]["channel"]["self"]["communityPoints"]
             # stores the location of the points in the data json
+            points = pointData.get("balance", 0)
+            # grabs the actual points (returns 0 if none found)
             caseName = data["data"]["community"]["displayName"]
             # stores the case sensitive name (visual thing)
             try:
-                return {"success": True, "error": "None", "points": points["balance"], "caseName": caseName}
+                return {"success": True, "error": "None", "points": points, "caseName": caseName}
                 # returns a dictionary with the formatted name
 
             except Exception as twErr:
@@ -3125,7 +3819,7 @@ def pointGrabber(state, channel: str) -> dict:
                 # returns a dictionary with failure
         else:
         # if the data package isn't valid and/or there's no data header
-            return {"success": False, "error": "No data rece"}
+            return {"success": False, "error": "No data!"}
             # returns a dictionary with failure
 
     except Exception as dtErr:
@@ -3155,44 +3849,12 @@ def streakGrabber(state, channel: str, channelID:int = None) -> dict:
     
     if channelID == None:
     # if no channelID is passed
-        idPayload = {
-        # forms a payload just for the ID
-            "operationName": hashMap["ChannelID Operation"],
-            # this was the first operation I found that has a return for the ID without requesting with the ID
-            "variables": {
-                "login": channel,
-            },
-            "extensions": {
-                "persistedQuery": {
-                    "sha256Hash": hashMap["ChannelID Hash"],
-                    # the hash for the operation, may change
-                    "version": int(hashMap["ChannelID Version"])
-                    # the hash version
-                }
-            }
-        }
-
-        idRequest = reqSession.post(rURL, json = idPayload, headers = headers)
-        # makes request to get the 
-        idData = idRequest.json()
-        # stores the resulting data json
-
-        try:
-        # attempts to access the returned json
-            if idData and idData["data"]:
-            # if there's a return package and the package has "data"
-                channelID = idData["data"]["channel"]["id"]
-                # grabs the channel ID from the returned data package
-            else:
-                return {"success": False, "error": "ChannelID not found"}
-                # returns failure dict
-        except:
-        # if it can't access/fails at 
-            return {"success": False, "error": "ChannelID failure"}
-            # returns a failure dict
-
-    channelID = str(channelID)
-    # stringifies the channelID
+        tempChannelID = channelIDGrab(state, channel)
+        # calls the channelIDGrab with the channel
+        if tempChannelID["success"]:
+        # if the channel ID dictionary is a success
+            channelID = tempChannelID["channelID"]
+            # stringifies the channelID
     
     if channelID != None:
     # if the channelID is now not None
@@ -3415,8 +4077,6 @@ def sendPrediction(state, bet: int, eventID: str, outcomeID: str) -> dict:
     """Function that makes a bet (prediction) on given channel"""
     global reqSession
 
-    print("An attempt was made to send prediction", state, bet, eventID, outcomeID)
-
     rURL = "https://gql.twitch.tv/gql"
     # the endpoint to make requests to
 
@@ -3433,17 +4093,18 @@ def sendPrediction(state, bet: int, eventID: str, outcomeID: str) -> dict:
     # forms a payload from the required information
         "operationName": hashMap["Bet Operation"],
         "variables": {
-            "eventID": eventID,
-            "outcomeID": outcomeID,
-            "points": bet,
-            "transactionID": uuid.uuid4().hex
-            # forms a 32-character UUID as the ID
+            "input": {
+                "eventID": eventID,
+                "outcomeID": outcomeID,
+                "points": bet,
+                "transactionID": uuid.uuid4().hex
+                # 32-character uuid, no dashes (hex)
+            }
         },
         "extensions": {
             "persistedQuery": {
                 "sha256Hash": hashMap["Bet Hash"],
                 "version": hashMap["Bet Version"]
-                # this hash is found in devTools console, (search for GQL with "" operation)
             }
         }
     }
@@ -3461,7 +4122,8 @@ def sendPrediction(state, bet: int, eventID: str, outcomeID: str) -> dict:
             # tries to get the prediction information from the data
                 predictionData = data["data"]["makePrediction"]
                 # nested data
-                if predictionData["error"] == "null":
+
+                if predictionData["error"] == "null" or not predictionData["error"]:
                 # if the error field is null (no error)
                     return {"success": True, "error": "None"}  
                     # returns a dictionary with success
@@ -3486,17 +4148,330 @@ def sendPrediction(state, bet: int, eventID: str, outcomeID: str) -> dict:
 
 
 
-### Make Predict ###
+### Start Prediction (Mod-Only) ###
 
-def makePrediction():
-    """Function to make a prediction (mods)"""
+def startPrediction(state, title: str, duration: int, outcomes: list, channelID:str = None) -> dict:
+    """Function that starts a bet (prediction) on given channel
+        Outcomes needs to be a list with 10 > outcomes >= 2, in format: \n 
+        [{"title": opt1, "color": "BLUE"}, {"title": opt2, "color": "PINK"}]
+        \n If more than 2 options are set, they all use BLUE"""
+    global reqSession
+
+    print("An attempt was made to start a prediction", title, channelID, duration, outcomes)
+
+    rURL = "https://gql.twitch.tv/gql"
+    # the endpoint to make requests to
+
+    authToken = state.authToken
+    # gets the authorisation token from the app state variable
+
+    headers = {
+            "Client-Id": hashMap["ClientID"],
+            "Authorization": f"OAuth {authToken}",
+    }
+    # forms the headers used to dictate the data request type
+
+    if channelID == None:
+    # if no channelID is passed
+        channel = predictChannel
+        # grabs the channel from global prediction variable
+        tempChannelID = channelIDGrab(state, channel)
+        # calls the channelIDGrab with the channel
+        if tempChannelID["success"]:
+        # if the channel ID dictionary is a success
+            channelID = tempChannelID["channelID"]
+            # stringifies the channelID
+
+    if channelID != None:
+    # if it's now set
+        payload = {
+        # forms a payload from the required information
+            "operationName": hashMap["Prediction Make Operation"],
+            "variables": {
+                "input": {
+                    "title": title,
+                    "channelID": channelID,
+                    "predictionWindowSeconds": duration,
+                    "outcomes": outcomes
+                }
+            },
+            "extensions": {
+                "persistedQuery": {
+                    "sha256Hash": hashMap["Prediction Make Hash"],
+                    "version": hashMap["Prediction Make Version"]
+                }
+            }
+        }
+
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+
+        try:
+        # tries to read the received data file
+            if data and data["data"]:
+            # checks if the data package is valid and that there's a header for "data"                    
+                try:
+                # tries to get the prediction information from the data
+                    predictionData = data["data"]["makePrediction"]
+                    # nested data
+
+                    if predictionData["error"] == "null" or not predictionData["error"]:
+                    # if the error field is null (no error)
+                        return {"success": True, "error": "None"}  
+                        # returns a dictionary with success
+                    else:
+                    # if it's not null
+                        return {"success": False, "error": predictionData["error"]}
+                        # returns the dictionary with the given error
+
+                except Exception as twErr:
+                # saves the error as tw(itch)Err(or)
+                    return {"success": False, "error": f"{str(twErr)}"}
+                    # returns a dictionary with failure
+            else:
+            # if the data package isn't valid and/or there's no data header
+                return {"success": False, "error": "No data received"}
+                # returns a dictionary with failure
+
+        except Exception as dtErr:
+        # saves the error as d(a)t(a)Err(or)
+            return {"success": False, "error": f"{str(dtErr)}"}
+            # returns a dictionary with failure
+    else:
+    # if there's still no ID
+        return {"success": False, "error": "No channelID!"}
+        # returns a dictionary with failure
 
 
 
-### Payout Predict ###
+### Payout Prediction (Mod-Only) ###
 
-def endPrediction():
-    """Function to delete/payout prediction (mods)"""
+def payoutPrediction(state, eventID: str, outcomeID: str) -> dict:
+    """Function that pays out a given prediction"""
+    global reqSession
+
+    print("An attempt was made to pay out a prediction", eventID, outcomeID)
+
+    rURL = "https://gql.twitch.tv/gql"
+    # the endpoint to make requests to
+
+    authToken = state.authToken
+    # gets the authorisation token from the app state variable
+
+    headers = {
+            "Client-Id": hashMap["ClientID"],
+            "Authorization": f"OAuth {authToken}",
+    }
+    # forms the headers used to dictate the data request type
+
+    payload = {
+    # forms a payload from the required information
+        "operationName": hashMap["Prediction Resolve Operation"],
+        "variables": {
+            "input": {
+                "eventID": eventID,
+                "outcomeID": outcomeID
+            }
+        },
+        "extensions": {
+            "persistedQuery": {
+                "sha256Hash": hashMap["Prediction Resolve Hash"],
+                "version": hashMap["Prediction Resolve Version"]
+            }
+        }
+    }
+
+    request = reqSession.post(rURL, json = payload, headers = headers)
+    # forms a data request
+    data = request.json()
+    # stores the resulting data json
+    print(data)
+
+    try:
+    # tries to read the received data file
+        if data and data["data"]:
+        # checks if the data package is valid and that there's a header for "data"                    
+            try:
+            # tries to get the prediction information from the data
+                predictionData = data["data"]["cancelPredictionEvent"]
+                # nested data
+
+                if predictionData["error"] == "null" or not predictionData["error"]:
+                # if the error field is null (no error)
+                    return {"success": True, "error": "None"}  
+                    # returns a dictionary with success
+                else:
+                # if it's not null
+                    return {"success": False, "error": predictionData["error"]}
+                    # returns the dictionary with the given error
+
+            except Exception as twErr:
+            # saves the error as tw(itch)Err(or)
+                return {"success": False, "error": f"{str(twErr)}"}
+                # returns a dictionary with failure
+        else:
+        # if the data package isn't valid and/or there's no data header
+            return {"success": False, "error": "No data received"}
+            # returns a dictionary with failure
+
+    except Exception as dtErr:
+    # saves the error as d(a)t(a)Err(or)
+        return {"success": False, "error": f"{str(dtErr)}"}
+        # returns a dictionary with failure
+
+
+
+### Delete Prediction (Mod-Only) ###
+
+def deletePrediction(state, eventID: str) -> dict:
+    """Function that deletes and refunds a given prediction"""
+    global reqSession
+
+    print("An attempt was made to delete a prediction", eventID)
+
+    rURL = "https://gql.twitch.tv/gql"
+    # the endpoint to make requests to
+
+    authToken = state.authToken
+    # gets the authorisation token from the app state variable
+
+    headers = {
+            "Client-Id": hashMap["ClientID"],
+            "Authorization": f"OAuth {authToken}",
+    }
+    # forms the headers used to dictate the data request type
+
+    payload = {
+    # forms a payload from the required information
+        "operationName": hashMap["Prediction Delete Operation"],
+        "variables": {
+            "input": {
+                "eventID": eventID
+            }
+        },
+        "extensions": {
+            "persistedQuery": {
+                "sha256Hash": hashMap["Prediction Delete Hash"],
+                "version": hashMap["Prediction Delete Version"]
+            }
+        }
+    }
+
+    request = reqSession.post(rURL, json = payload, headers = headers)
+    # forms a data request
+    data = request.json()
+    # stores the resulting data json
+    print(data)
+
+    try:
+    # tries to read the received data file
+        if data and data["data"]:
+        # checks if the data package is valid and that there's a header for "data"                    
+            try:
+            # tries to get the prediction information from the data
+                predictionData = data["data"]["makePrediction"]
+                # nested data
+
+                if predictionData["error"] == "null" or not predictionData["error"]:
+                # if the error field is null (no error)
+                    return {"success": True, "error": "None"}  
+                    # returns a dictionary with success
+                else:
+                # if it's not null
+                    return {"success": False, "error": predictionData["error"]}
+                    # returns the dictionary with the given error
+
+            except Exception as twErr:
+            # saves the error as tw(itch)Err(or)
+                return {"success": False, "error": f"{str(twErr)}"}
+                # returns a dictionary with failure
+        else:
+        # if the data package isn't valid and/or there's no data header
+            return {"success": False, "error": "No data received"}
+            # returns a dictionary with failure
+
+    except Exception as dtErr:
+    # saves the error as d(a)t(a)Err(or)
+        return {"success": False, "error": f"{str(dtErr)}"}
+        # returns a dictionary with failure
+
+
+
+### Lock Prediction (Mod-Only) ###
+
+def lockPrediction(state, eventID: str) -> dict:
+    """Function that locks/closes a given prediction"""
+    global reqSession
+
+    print("An attempt was made to lock a prediction", eventID)
+
+    rURL = "https://gql.twitch.tv/gql"
+    # the endpoint to make requests to
+
+    authToken = state.authToken
+    # gets the authorisation token from the app state variable
+
+    headers = {
+            "Client-Id": hashMap["ClientID"],
+            "Authorization": f"OAuth {authToken}",
+    }
+    # forms the headers used to dictate the data request type
+
+    payload = {
+    # forms a payload from the required information
+        "operationName": hashMap["Prediction Lock Operation"],
+        "variables": {
+            "input": {
+                "eventID": eventID
+            }
+        },
+        "extensions": {
+            "persistedQuery": {
+                "sha256Hash": hashMap["Prediction Lock Hash"],
+                "version": hashMap["Prediction Lock Version"]
+            }
+        }
+    }
+
+    request = reqSession.post(rURL, json = payload, headers = headers)
+    # forms a data request
+    data = request.json()
+    # stores the resulting data json
+    print(data)
+
+    try:
+    # tries to read the received data file
+        if data and data["data"]:
+        # checks if the data package is valid and that there's a header for "data"                    
+            try:
+            # tries to get the prediction information from the data
+                predictionData = data["data"]["makePrediction"]
+                # nested data
+
+                if predictionData["error"] == "null" or not predictionData["error"]:
+                # if the error field is null (no error)
+                    return {"success": True, "error": "None"}  
+                    # returns a dictionary with success
+                else:
+                # if it's not null
+                    return {"success": False, "error": predictionData["error"]}
+                    # returns the dictionary with the given error
+
+            except Exception as twErr:
+            # saves the error as tw(itch)Err(or)
+                return {"success": False, "error": f"{str(twErr)}"}
+                # returns a dictionary with failure
+        else:
+        # if the data package isn't valid and/or there's no data header
+            return {"success": False, "error": "No data received"}
+            # returns a dictionary with failure
+
+    except Exception as dtErr:
+    # saves the error as d(a)t(a)Err(or)
+        return {"success": False, "error": f"{str(dtErr)}"}
+        # returns a dictionary with failure
 
 
 
@@ -3513,10 +4488,11 @@ class AppState:
 ### Point/Streak/Predict Manager ###
 
 class PointWorker(QObject):
+    """A class to handle point/streak grabbing"""
     # signals to communicate with UI
     pointWorkerProgress = pyqtSignal(dict)
     # stores the percentage, channel name and points inside a pyqt signal, to update UI
-    pointWorkerDone = pyqtSignal(int, int, list)
+    pointWorkerDone = pyqtSignal(int, int, list, int)
     # gets set when done
 
     def __init__(self, state, channels):
@@ -3690,7 +4666,7 @@ class PointWorker(QObject):
                 if expiring:
                 # if there's an expiration date
                     self.progressDict = {
-                        "type": "full",
+                        "type": "Full",
                         "channel": channel,
                         "index": num,
                         "pointsOn": enablePoints,
@@ -3705,7 +4681,7 @@ class PointWorker(QObject):
                 else:
                 # if there's no expiry date
                     self.progressDict = {
-                        "type": "full",
+                        "type": "Full",
                         "channel": channel,
                         "index": num,
                         "pointsOn": enablePoints,
@@ -3758,8 +4734,6 @@ class PointWorker(QObject):
                 self.errorCount = (self.errorCount + 1)
                 # on error, adds an error to counter
 
-
-
             streak = streakGrabber(self.state, channel)
             # calls the streak grabber to get the streak
 
@@ -3781,26 +4755,29 @@ class PointWorker(QObject):
             # forms the csvEntry for the channel
 
             self.progressDict = {
-                "type": "single",
+                "type": "Single",
                 "channel": channel,
-                "index": num,
+                "index": 1,
                 "pointsOn": enablePoints,
                 "points": foundPoints,
                 "error": errorBool,
                 "total": self.totalPoints,
                 "streaksOn": enableStreaks,
-                "streak": 0 
+                "streak": streakNum
             }
             # forms a progress dictionary to pass
 
             self.pointWorkerProgress.emit(self.progressDict)
             # sends a progress update to the headless UI updater
 
+            self.csvWriter(csvEntries, self.errorCount, self.maxStreak)
+            # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
+
             
 
 ### CSV Writer ###
 
-    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int, expiryList: list=None):
+    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int, expiryList: list=None, singlePoints: int = None):
         """The function that writes the final CSV"""
 
         rows = []
@@ -3836,9 +4813,15 @@ class PointWorker(QObject):
         # if the expiry list isn't defined (not passed)
             expiryList = []
             # makes an empty list
+        if not singlePoints:
+        # if the singlePoints wasn't passed
+            singlePoints = 0
+            # sets to 0
 
-        self.pointWorkerDone.emit(errors, maxStreak, expiryList)
+        self.pointWorkerDone.emit(errors, maxStreak, expiryList, singlePoints)
         # once done, sends a signal to the finished pyqt signal with the error count, highest streak and expiration list
+        self.running = False
+        # stops itself
 
 
 
@@ -3865,21 +4848,36 @@ class predictionWorker(QObject):
         # connects the stop signal to the stopper function (stops grabbing predictions)
         ctrl.timerSwap.connect(self.timerChange)
         # connects the timer swap signal to the timer change function
+        ctrl.predictionTimerOverride.connect(self.timerOverride)
+        # connects the timer override signal to the timer override function
         self.timer = 15
         # a timer stored here that determines how often the refreshes occur
+        self.refresh = threading.Event()
+        # a threading event to store the timer in
 
 
 
 ### Run Prediction Worker ###
 
     def run(self):
-        """Runner"""
+        """Function that loops function calls"""
         while self.running:
         # while the running status is True
             self.intermed()
             # keeps calling the intermediary command with a timed cooldown
-            time.sleep(self.timer)
-            # waits passed time
+            self.refresh.wait(timeout=self.timer)
+            # waits the timer duration if it's not set before that
+            self.refresh.clear()
+            # clears the event queue
+
+
+
+### Override Timer ###
+
+    def timerOverride(self):
+        """Function that sets an event, overriding the current timer"""
+        self.refresh.set()
+        # sets an event, forcing run() to immediately run intermed, refreshing data faster
 
 
 
@@ -3944,9 +4942,10 @@ class predictionWorker(QObject):
 
         if betInfo["success"]:
         # if the return is a success
-            ctrl.taskChange.emit(f"Successfully bet {bet} on {selected}!\nMay the odds be ever in your favor!")
+            ctrl.taskChange.emit(f"Bet {bet} on {selected}\nMay the odds be ever in your favor!")
             # sets info text
-        
+            ctrl.mainWindow.predictAmountLine.setText("")
+            # clears the text
         else:
         # if the return isn't a success
             err = betInfo["error"]
@@ -3956,10 +4955,67 @@ class predictionWorker(QObject):
 
 
 
+### Manage Prediction ###
+
+    def predictionManager(self, action:str, title:str=None, eventID:str=None, outcomeID:str=None, outcomes:list=None, duration:int=None, channelID:int=None):
+        """Function to manage predictions\n
+        Start = title, duration, outcomes, channelID\n
+        Delete = eventID\n
+        Payout = eventID, outcomeID\n
+        Lock = eventID\n"""
+        # long, very informative doc, mmmyeesss
+
+        modStatus = ctrl.mainWindow.modCheck()
+        # gets the mod status from modCheck
+
+        if not modStatus:
+        # if the return is false
+            return
+            # stops (can't do anything if not a mod anyway)
+
+        if action == "Start":
+        # start prediction (make a new one)
+            strDict = startPrediction(self.state, title, duration, outcomes, channelID)
+            # calls prediction starter
+            if strDict["success"]:
+            # if the return has success True
+                print("made prediction yippie")
+            else:
+                print("didn't make prediction saj")
+
+        elif action == "Delete":
+        # delete the prediction
+            delDict = deletePrediction(self.state, eventID)
+            # calls prediction deleter
+            if delDict["success"]:
+                print("deleted prediction yippie")
+            else:
+                print("didn't delete, saj")
+
+        elif action == "Payout":
+        # pay out an option
+            payDict = payoutPrediction(self.state, eventID, outcomeID)
+            # calls prediction payout
+            if payDict["success"]:
+                print("paid out prediction yippie")
+            else:
+                print("didn't pay out, saj")
+
+        elif action == "Lock":
+        # lock/close prediction
+            lockDict = lockPrediction(self.state, eventID)
+            # calls prediction locker
+            if lockDict["success"]:
+                print("locked prediction, yippie")
+            else:
+                print("didn't lock prediction, saj")
+
+
+
 ### Controller Class ###
 
 class windowController(QObject):
-    """A class to handle the window definitions and communication"""
+    """A class to handle the cross-class/function communication and startup"""
 
     starterWindowDone = pyqtSignal()
     """A pyQt signal to signal the starter window is done loading"""
@@ -3969,10 +5025,13 @@ class windowController(QObject):
     """A pyQt signal to send data to prediction UI"""
     pwStopSignal = pyqtSignal()
     """A pyQt signal to tell the prediction worker to stop"""
-    predictMaker = pyqtSignal(int, str, str, str, int)
+    predictMaker = pyqtSignal(int, str, str, str)
     """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str)"""
     timerSwap = pyqtSignal(int)
     """A pyQt signal to change the prediction/balance refresh timer"""
+    predictionTimerOverride = pyqtSignal()
+    """A pyQt signal to set an event and immediately override timer"""
+
 
     def __init__(self):
         super().__init__()
@@ -3991,6 +5050,27 @@ class windowController(QObject):
         # calls mainStarter once the start window is done with config
         self.startWindow.starterDone.connect(self.mainContinuer)
         # when the starter is done, signals the next stage (mainWindow -> extractAuthToken)
+
+        self.profilePath = profilePath
+        # stores the profile path from global
+        self.profileName = profileName
+        # stores the profile name from global
+
+        self.browserProfile = QWebEngineProfile(self.profileName, self)
+        # sets the browser profile to the given profile (default is Default)
+        self.browserProfile.setCachePath(os.path.join(self.profilePath, self.profileName))
+        # sets the cache path (<installation>/Data/Profile/<profileName>/)
+        self.browserProfile.setPersistentStoragePath(os.path.join(self.profilePath, self.profileName))
+        # sets the storage path (<installation>/Data/Profile/<profileName>/)
+
+        self.settings = self.browserProfile.settings()
+        # manages the browser settings
+        self.settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+        # ensures local storage is enabled 
+        self.settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+        # ensures plugins are allowed to function
+        self.settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        # ensures javascript is enabled
     
 
 
@@ -3998,7 +5078,7 @@ class windowController(QObject):
 
     def mainStarter(self):
         """Function to start the main window"""
-        self.mainWindow = tepmWindow(self.state)
+        self.mainWindow = tepmWindow(self.state, self.browserProfile)
         # stores the main window class
         self.mainWindow.show()
         # shows
@@ -4021,6 +5101,8 @@ class windowController(QObject):
         
         self.predictThread = QThread()
         # makes a thread for the prediction hashing
+        self.predictThread.setObjectName("Prediction Thread")
+        # object name (debug)
         self.predictWorker = predictionWorker(self.state)
         # assigns prediction worker
         self.predictWorker.moveToThread(self.predictThread)
@@ -4056,8 +5138,18 @@ class windowController(QObject):
             # stores the locked prediction
             resolvedPredictions = prediction["resolved"]
             # stores the resolved prediction
-            # myPredictions = prediction["recents"]
+            myPredictions = prediction.get("recents", False)
             # stores user's previous predictions (of the channel)
+            if myPredictions:
+            # if the dictionary is valid and contains something
+                lastPrediction = myPredictions[0]
+                # gets the 0th element in the list of predictions
+                lastBetID = lastPrediction["event"]["id"]
+                # gets the ID of the last prediction
+            else:
+            # not valid/empty
+                lastBetID = False
+                # sets gibberish string to not match current
 
             if len(activePrediction) > 0:
             # if the active predict list has more than 0 elements
@@ -4085,55 +5177,87 @@ class windowController(QObject):
                 # sets the type to resolved
                 rawTimestamp = truePrediction["endedAt"]
                 # grabs the end stamp
-                
-            title = truePrediction["title"]
-            # grabs the prediction title
-            outcomes = truePrediction["outcomes"]
-            # grabs the list of outcomes
-            creator = truePrediction["createdBy"]["displayName"]
-            # grabs the creator name
-            eventID = truePrediction["id"]
-            # grabs the event ID from the prediction dictionary
-            winner = truePrediction["winningOutcome"]
-            # grabs the winning outcome (this is null for active/locked)
-            timer = truePrediction["predictionWindowSeconds"]
-            # how long the timer is (how long the prediction is/was open for)
 
-            timestampUTC = datetime.datetime.fromisoformat(rawTimestamp.replace("Z", "+00:00"))
-            # formats it to datetime 
-            timestampLocal = timestampUTC.astimezone()
-            # swaps to current timezone
-            predictionStamp = timestampLocal.strftime("%B %d at %I:%M %p").replace(" 0", " ")
-            # finalizes it into eg. "April 21 at 11:06 AM" (the example I had)
-
-            if balance["success"]:
-            # if the balance returned a success dictionary
-                currentBal = balance["points"]
-                # grabs the points
-                caseName = balance["caseName"]
-                # grabs the case sensitive name
             else:
-            # if not
-                currentBal = False
-                # sets the balance to False
-                caseName = False
-                # sets the case sensitive name to False
+            # channel has no listed predictions (never ran or ran too long ago)
+                truePrediction = False
+                # sets it to false
+            
+            if truePrediction:
+                title = truePrediction["title"]
+                # grabs the prediction title
+                outcomes = truePrediction["outcomes"]
+                # grabs the list of outcomes
+                creator = truePrediction["createdBy"]["displayName"]
+                # grabs the creator name
+                eventID = truePrediction["id"]
+                # grabs the event ID from the prediction dictionary
 
-            finalPrediction = {
-                "success": True,
-                "type": truePrediction["type"],
-                "id": eventID,
-                "title": title,
-                "outcomes": outcomes,
-                "timestamp": predictionStamp,
-                "creator": creator,
-                "winner": winner,
-                "timer": timer,
-                "localTS": timestampLocal,
-                "balance": currentBal,
-                "caseName": caseName
-            }
-            # forms a dictionary with easier-to-access data than the full thing (reduces work for UI)
+                if eventID == lastBetID:
+                # if there's a bet on this prediction
+                    votedOutcome = lastPrediction["outcome"]["id"]
+                    # gets the ID of the voted option
+                    votedSum = lastPrediction["points"]
+                    # gets the total bet
+                    sumWon = lastPrediction["pointsWon"]
+                    # gets the won points
+                else:
+                # no bet
+                    votedOutcome = False
+                    votedSum = 0
+                    sumWon = 0
+                    # sets empty/gibberish standins
+
+                winner = truePrediction["winningOutcome"]
+                # grabs the winning outcome (this is null for active/locked)
+                timer = truePrediction["predictionWindowSeconds"]
+                # how long the timer is (how long the prediction is/was open for)
+
+                timestampUTC = datetime.datetime.fromisoformat(rawTimestamp.replace("Z", "+00:00"))
+                # formats it to datetime 
+                timestampLocal = timestampUTC.astimezone()
+                # swaps to current timezone
+                predictionStamp = timestampLocal.strftime("%B %#d at %#H:%M:%S")
+                # finalizes it into legible format
+
+                if balance["success"]:
+                # if the balance returned a success dictionary
+                    currentBal = balance["points"]
+                    # grabs the points
+                    caseName = balance["caseName"]
+                    # grabs the case sensitive name
+                else:
+                # if not
+                    currentBal = 0
+                    # sets the balance to 0
+                    caseName = False
+                    # sets the case sensitive name to False
+
+                finalPrediction = {
+                    "success": True,
+                    "type": truePrediction["type"],
+                    "id": eventID,
+                    "title": title,
+                    "outcomes": outcomes,
+                    "timestamp": predictionStamp,
+                    "creator": creator,
+                    "winner": winner,
+                    "timer": timer,
+                    "localTS": timestampLocal,
+                    "balance": currentBal,
+                    "caseName": caseName,
+                    "votedOutcome": votedOutcome,
+                    "votedSum": votedSum,
+                    "sumWon": sumWon
+                }
+                # forms a dictionary with easier-to-access data than the full thing (reduces work for UI)
+
+            else:
+            # no prediction data
+                finalPrediction = {
+                    "success": False
+                }
+                # fail dictionary
 
             self.newPData.emit(finalPrediction)
             # sends the dictionary with success state
@@ -4150,7 +5274,7 @@ class windowController(QObject):
     def windowSwap(self, window: str):
         """Function to swap active window"""
         if window == "Starter":
-        # calls for starter window to be visible (return from main)
+        # calls for starter window to be visible (start -> main -> start)
             self.mainWindow.hide()
             # hides the main window
             self.startWindow.returner()
@@ -4158,11 +5282,11 @@ class windowController(QObject):
             self.startWindow.show()
             # shows the starter window
         else:
-        # not starter
+        # not starter (main -> start -> main)
             self.startWindow.hide()
             # hides the starter window
-            self.mainWindow.returner()
-            # calls the returner function to go back to the start
+            self.mainStarter()
+            # calls mainStarter to restart the main class
             self.mainWindow.show()
             # shows the main window
 
