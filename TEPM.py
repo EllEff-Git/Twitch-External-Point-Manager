@@ -1,4 +1,4 @@
-import os, sys, requests, datetime, json, subprocess, uuid, threading
+import os, sys, requests, datetime, json, subprocess, uuid, threading, queue
 # Required program management
 import pandas as pnd
 # Soft required for CSV management (not required, but improves formatting)
@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.11.0652"
+tepmVer = "0.5.12.2125"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -69,12 +69,16 @@ enablePoints = False
 """The boolean for point checking"""
 enableErrorLog = False
 """The boolean for error storing in CSV"""
+defaultBet = 0
+"""The default points to set with default button"""
+roundBalanceBet = False
+"""The boolean for using default bet as a rounding guide"""
 streakMap = {}
 """The map that holds all the streak list information"""
 hashMap = {}
 """The map that holds all the hashes and related information"""
-excludedEntries = ["enableErrorsInCSV", "autoAddStreaks", "autoRemoveStreaks", "exampleChannel"]
-"""A list of entries that shouldn't count for the streak list"""
+excludedEntries = ["enableErrorsInCSV", "autoAddStreaks", "autoRemoveStreaks", "defaultBet", "roundBalanceBet" "exampleChannel"]
+"""A list of streakMap entries that shouldn't count for the streak list"""
 overrideChannel = None
 """The single channel name, if using single channel"""
 predictChannel = None
@@ -96,6 +100,9 @@ reqSession = requests.Session()
 """A request session that stores cached request information"""
 rURL = "https://gql.twitch.tv/gql"
 """The Twitch endpoint to make requests to"""
+gURL = "https://api.github.com/repos/EllEff-Git/SBO/tags"
+"""The GitHub URL to make an update request to"""
+# real url is "https://api.github.com/repos/EllEff-Git/Twitch-External-Point-Manager/tags"
 
 os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-widevine --enable-gpu --enable-hls --disable-webgpu"
 # environment flags for the chromium webengine (directory stuff, ensures hardware acceleration is on)
@@ -115,15 +122,15 @@ def folders(path):
 
 ### Starter Window UI ###
 
-class starterWindow(QWidget):
+class StarterWindow(QWidget):
     """A class for the first window that pops up"""
 
     labelSwap = pyqtSignal(str)
-    # a pyQt signal to swap the label
+    """A pyQt signal to swap the starter window user inform label"""
     configLoaded = pyqtSignal()
-    # a pyQt signal to indicate the config has been loaded successfully
-    starterDone = pyqtSignal()
-    # a pyQt signal to indicate readiness state
+    """A pyQt signal to indicate the config has been loaded successfully"""
+    starterDone = pyqtSignal(str)
+    """A pyQt signal to indicate the starter window is done, passes the main window task string"""
 
     def __init__(self):
         super().__init__()
@@ -133,12 +140,11 @@ class starterWindow(QWidget):
     ### Init / Basic ###
 
         self.version = tepmVer
-        # stores the version in self
-
+        """Program version"""
         self.mainIcon = iconPath
-        # the program's main icon
-        self.programName = f"TEPM Starter v{self.version}"
-        # stores the program name
+        """Program icon"""
+        self.programName = f"TEPM Starter"
+        """Program name"""
 
         self.optionReturn = False
         # boolean to store whether user has visited options or not (changes visuals)
@@ -151,7 +157,7 @@ class starterWindow(QWidget):
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-        self.setMinimumSize(1000, 600)
+        self.setMinimumSize(1000, 660)
         # the window size
 
 
@@ -206,7 +212,7 @@ class starterWindow(QWidget):
     ### Hideable/Showable Elements ###
 
         self.userInputField = QLineEdit()
-        """A text field entry for anything"""
+        """A text field entry for channel selection"""
         self.userInputField.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # alings to center
         self.userInputField.setFixedSize(300, 30)
@@ -215,6 +221,37 @@ class starterWindow(QWidget):
         # adds the qline to layout (row 1, col 0)
         self.userInputField.hide()
         # hides by default
+
+
+
+    ### Version ###
+
+        self.versionTag = QLabel(f"TEPM v{self.version}\n ")
+        """A version tag label"""
+        self.versionTag.setToolTip("Current TEPM version")
+        # tooltip
+        self.versionTag.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
+        # aligns the text itself to the left
+        self.versionTag.setOpenExternalLinks(True)
+        # allows opening links (in case of new update)
+        self.mainLayout.addWidget(self.versionTag, 7, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        # adds to the bottom left corner
+
+
+
+    ### Exit ###
+
+        self.exitButton = QPushButton("Exit")
+        """Button to exit the starter window"""
+        self.exitButton.setToolTip("Quit the application")
+        # tooltip
+        self.exitButton.setMinimumSize(150, 50)
+        # size
+        self.exitButton.clicked.connect(lambda: app.exit())
+        # connects to exit
+        self.mainLayout.addWidget(self.exitButton, 7, 2, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter)
+        # adds to layout (bottom middle)
+
 
 
 
@@ -375,13 +412,13 @@ class starterWindow(QWidget):
             # if it can't load it properly
                 self.labelSwap.emit("Could not open the hash file, please ensure it's valid.\nTry downloading a new one from GitHub")
                 # user inform
-                QTimer.singleShot(2500, self.stopper)
+                QTimer.singleShot(2500, self.goToMainWindow)
                 # calls the stop function after a couple seconds
         else:
         # if the hash file doesn't exist
             self.labelSwap.emit("No hashes.json file found, please download a new one from GitHub.")
             # user inform
-            QTimer.singleShot(2500, self.stopper)
+            QTimer.singleShot(2500, self.goToMainWindow)
             # calls the stop function after a couple seconds
 
 
@@ -390,7 +427,7 @@ class starterWindow(QWidget):
 
     def configWindow(self):
         """Function to show the configuration window"""
-        global streakMap, enableErrorLog, autoAddStreaks, autoRemoveStreaks
+        global streakMap, enableErrorLog, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
         # global -> local
 
         self.configLayout = QGridLayout()
@@ -406,25 +443,22 @@ class starterWindow(QWidget):
         # if the streak map file exists
             with open(streakMapPath, "r") as strk:
             # opens the streak map json
-                streakMap = json.load(strk)
+                streakMap = dict(json.load(strk))
                 # loads the json map into variable
-            try:
-            # tries to get the values
-                enableErrorLog = streakMap["enableErrorsInCSV"]
+
+                enableErrorLog = streakMap.get("enableErrorsInCSV", True)
                 # gets the boolean for error logging
-                autoAddStreaks = streakMap["autoAddStreaks"]
+                autoAddStreaks = streakMap.get("autoAddStreaks", True)
                 # gets the boolean for auto-adding streaks
-                autoRemoveStreaks = streakMap["autoRemoveStreaks"]
+                autoRemoveStreaks = streakMap.get("autoRemoveStreaks", False)
                 # gets the boolean for auto-removing streaks
+                defaultBet = int(streakMap.get("defaultBet", 5000))
+                # gets the integer for default bet
+                roundBalanceBet = streakMap.get("roundBalanceBet", False)
+                # gets the boolean for balance rounding for bets
+
                 self.taskChooserConfig()
                 # calls the next stage
-            except:
-            # if the value grab fails
-                self.labelSwap.emit("Error reading the config file, please re-configure")
-                # user inform
-                QTimer.singleShot(3000, self.prepConfig)
-                # calls the modifyConfig after a couple seconds
-
         else:
         # if the file doesn't exist
             self.prepConfig()
@@ -437,28 +471,64 @@ class starterWindow(QWidget):
     def prepConfig(self):
         """Function to prepare for the configuration modification"""
 
-        self.labelSwap.emit("Select the options to use, please")
+        self.labelSwap.emit("Configure TEPM\nHover over any text field to see more details")
         # changes the main label
+
+        self.defaultBetMask = QIntValidator(0, 250000)
+        """A validator for the default bet"""
         
         self.autoAddStreaksCheckbox = QCheckBox("Auto-add streaks")
-        # adds a checkbox for autoAddStreaks
-        self.autoRemoveStreaksCheckbox = QCheckBox("Auto-remove streaks")
-        # adds a checkbox for autoRemoveStreaks
-        self.enableCSVErrorsCheckbox = QCheckBox("Store errors")
-        # adds a checkbox for enableErrorLog
-
+        """Checkbox for automatically adding streaks"""
         self.autoAddStreakText = QLabel("Automatically add active streaks to list")
-        self.autoAddStreakText.setToolTip("Active streak means any streak higher than 1")
+        """Text helper for streak addition"""
+        self.autoAddStreakText.setToolTip("When checking points and streaks, adds active streaks to the streak list file\n"
+                                        "Active streak = longer than 1")
+        # tooltip
+
+        self.autoRemoveStreaksCheckbox = QCheckBox("Auto-remove streaks")
+        """Checkbox for automatically removing inactive streaks"""
         self.autoRemoveStreaksText = QLabel("Automatically remove stale streaks")
+        """Text helper for streak removal"""
         self.autoRemoveStreaksText.setToolTip("Removes streaks that have been broken (0 streak)")
+        # tooltip
+
+        self.enableCSVErrorsCheckbox = QCheckBox("Store errors")
+        """Checkbox for enabling errors in CSV"""
         self.enableCSVErrorsText = QLabel("Whether to add any point grab errors into CSV")
-        self.enableCSVErrorsText.setToolTip("Add any potential error reasons into the CSV with data")
-        # adds tooltips for all 3
+        """Text helper for CSV errors"""
+        self.enableCSVErrorsText.setToolTip("Save any error reasons into the CSV with point/streak data\n"
+                                            "Error booleans are saved regardless of this option")
+        # tooltip
+
+        self.defaultBetLine = QLineEdit()
+        """Line to edit the default bet value"""
+        self.defaultBetLine.setValidator(self.defaultBetMask)
+        # sets a validator to only accept digits with a max bet of 250000
+        self.defaultBetLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.defaultBetLine.setPlaceholderText("5,000")
+        # background text
+        self.defaultBetText = QLabel("Default bet")
+        """Text helper for default bet"""
+        self.defaultBetText.setToolTip("Bet to set automatically with the default button\n"
+                                    "If the balance rounding is enabled, rounds the balance to the nearest set value instead\n"
+                                    "Eg. 10,000 means a balance of 15,202 would round to a bet of 5,202 (leaving 10,000 as the balance)\n"
+                                    "A balance of 31,863 would round to a bet of 1,863 (leaving 30,000 as the balance)")
+        # tooltip
+        
+        self.roundBalanceBetCheckbox = QCheckBox("Round balance to bet")
+        """Checkbox to enable balance rounding"""
+        self.roundBalanceBetText = QLabel("Whether to round the balance to form bets")
+        """Text helper for balance rounding"""
+        self.roundBalanceBetText.setToolTip("Uses the default bet as a 'rounding guide' instead")
+        # tooltip
 
         self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
         self.autoRemoveStreaksCheckbox.setChecked(autoRemoveStreaks)
         self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
-        # sets the check status based on the stored booleans (false by default)
+        self.defaultBetLine.setText(f"{defaultBet}")
+        self.roundBalanceBetCheckbox.setChecked(roundBalanceBet)
+        # sets the check status based on the stored values
 
         self.autoAddStreakText.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
@@ -469,34 +539,43 @@ class starterWindow(QWidget):
         self.enableCSVErrorsText.setAlignment(
             Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
         )
-        # centers all 3 text fields to the top of their slots
+        self.defaultBetText.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        )
+        self.roundBalanceBetText.setAlignment(
+            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
+        )
+        # centers all text fields to the top of their slots
 
         self.configLayout.addWidget(self.autoAddStreaksCheckbox, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.autoRemoveStreaksCheckbox, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds checkboxes to layout
+        self.configLayout.addWidget(self.defaultBetLine, 7, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.roundBalanceBetCheckbox, 9, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the selector fields to layout
 
         self.configLayout.addWidget(self.autoAddStreakText, 2, 0)
         self.configLayout.addWidget(self.autoRemoveStreaksText, 4, 0)
         self.configLayout.addWidget(self.enableCSVErrorsText, 6, 0)
+        self.configLayout.addWidget(self.defaultBetText, 8, 0)
+        self.configLayout.addWidget(self.roundBalanceBetText, 10, 0)
         # adds the text widgets to layout
 
-        self.configLayoutTopSpacer = QSpacerItem(50, 50)
-        self.configLayoutBotSpacer = QSpacerItem(50, 50)
-        # adds layout spacers
+        self.saveButtonTopSpacer = QSpacerItem(50, 20)
+        self.saveButtonBottomSpacer = QSpacerItem(50, 20)
+        # adds a layout spacer both above and below the "save" button
+        #self.mainLayout.addItem(self.saveButtonTopSpacer, 4, 2)
+        self.mainLayout.addItem(self.saveButtonBottomSpacer, 6, 2)
+        # adds the spacer to layout
 
-        self.configLayout.addItem(self.configLayoutTopSpacer, 0, 0)
-        self.configLayout.addItem(self.configLayoutBotSpacer, 7, 0)
-        # adds the spacers to layout
-
-        self.configPrepDoneButton = QPushButton("Done")
-        # adds a button to submit the config
-        self.configPrepDoneButton.setFixedSize(100, 50)
+        self.configPrepSaveButton = QPushButton("Save")
+        # adds a button to save the config
+        self.configPrepSaveButton.setFixedSize(100, 50)
         # sets size
-        self.mainLayout.addWidget(self.configPrepDoneButton, 4, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addWidget(self.configPrepSaveButton, 5, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to layout
 
-        self.configPrepDoneButton.clicked.connect(self.modifyConfigText)
+        self.configPrepSaveButton.clicked.connect(self.modifyConfigText)
         # done -> modify config
 
 
@@ -509,51 +588,62 @@ class starterWindow(QWidget):
         self.autoAddStreaksCheckbox.hide()
         self.autoRemoveStreaksCheckbox.hide()
         self.enableCSVErrorsCheckbox.hide()
-        # hides the checkboxes
+        self.defaultBetLine.hide()
+        self.roundBalanceBetCheckbox.hide()
+        # hides the entry fields
         self.autoAddStreakText.deleteLater()
         self.autoRemoveStreaksText.deleteLater()
         self.enableCSVErrorsText.deleteLater()
+        self.defaultBetText.deleteLater()
+        self.roundBalanceBetText.deleteLater()
         # deletes the texts
-        self.mainLayout.removeWidget(self.configPrepDoneButton)
-        # removes/hides all the previous widgets from the screen
+        self.configPrepSaveButton.deleteLater()
+        # deletes the save button
 
-        self.configPrepDoneButton.deleteLater()
-        # deletes the widgets
+        self.mainLayout.removeItem(self.saveButtonTopSpacer)
+        self.mainLayout.removeItem(self.saveButtonBottomSpacer)
+        # removes the spacers
 
         self.labelSwap.emit("Modifying configuration...")
         # sets new text
 
         if self.optionReturn:
         # if user returns from options screen
-            self.modifyConfig()
-            # calls it immediately
+            QTimer.singleShot(300, self.modifyConfig)
+            # calls modifyConfig faster
         else:
         # if it's the first time
             self.optionReturn = True
             # sets the boolean to True so it gets caught
-            QTimer.singleShot(1500, self.modifyConfig)
-            # calls modifyConfig 2 seconds later
+            QTimer.singleShot(750, self.modifyConfig)
+            # calls modifyConfig slightly later
     
     def modifyConfig(self):
         """The function that actually modifies the config"""
-        global enableErrorLog, streakMap, autoAddStreaks, autoRemoveStreaks
+        global enableErrorLog, streakMap, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
         # global -> local
 
         streakMap["autoAddStreaks"] = self.autoAddStreaksCheckbox.isChecked()
         streakMap["autoRemoveStreaks"] = self.autoRemoveStreaksCheckbox.isChecked()
         streakMap["enableErrorsInCSV"] = self.enableCSVErrorsCheckbox.isChecked()
+        streakMap["defaultBet"] = self.defaultBetLine.text().strip()
+        streakMap["roundBalanceBet"] = self.roundBalanceBetCheckbox.isChecked()
         streakMap["exampleChannel"] = "exampleChannelID"
         # adds map settings
 
         autoAddStreaks = self.autoAddStreaksCheckbox.isChecked()
         autoRemoveStreaks = self.autoRemoveStreaksCheckbox.isChecked()
         enableErrorLog = self.enableCSVErrorsCheckbox.isChecked()
-        # sets the global booleans based on the checkbox values
+        defaultBet = int(self.defaultBetLine.text().strip())
+        roundBalanceBet = self.roundBalanceBetCheckbox.isChecked()
+        # sets the global variables based on the entry values
 
         self.autoAddStreaksCheckbox.deleteLater()
         self.autoRemoveStreaksCheckbox.deleteLater()
         self.enableCSVErrorsCheckbox.deleteLater()
-        # deletes the checkboxes from memory after they've been checked
+        self.defaultBetLine.deleteLater()
+        self.roundBalanceBetCheckbox.deleteLater()
+        # deletes the entry fields after they've been checked
 
         with open(streakMapPath, "w") as strk:
         # opens the streak config location (or makes a new file)
@@ -602,7 +692,7 @@ class starterWindow(QWidget):
         self.streakGrabTask.setToolTip("Tasks related to view streaks")
         self.singleGrabTask.setToolTip("Single channel's points and streak")
         self.predictionTask.setToolTip("Opens the prediction view")
-        self.skipToBrowser.setToolTip("Bypass processing and enter the browser\nUse this if you want to change Twitch account")
+        self.skipToBrowser.setToolTip("Bypass processing and enter the browser\nUse this to change the logged in Twitch account")
         # tooltips
 
         self.pointGrabTask.setMinimumSize(250, 40)
@@ -628,7 +718,7 @@ class starterWindow(QWidget):
         self.optionsButton.clicked.connect(self.options)
         # connects the options button to the options function
 
-        self.mainLayout.addWidget(self.optionsButton, 4, 4, alignment=Qt.AlignmentFlag.AlignRight)
+        self.mainLayout.addWidget(self.optionsButton, 7, 4, alignment=Qt.AlignmentFlag.AlignRight)
         # adds the button to the right bottom corner
 
         try:
@@ -651,6 +741,59 @@ class starterWindow(QWidget):
         self.predictionTask.clicked.connect(lambda: self.taskChooser("Prediction", 4))
         self.skipToBrowser.clicked.connect(lambda: self.taskChooser("Skip to Browser", 5))
         # calls the task chooser to further check the task(s)
+
+        self.checkUpdate()
+        # runs the update check to see if there's a new version of TEPM
+
+
+
+### Update Checker ###
+
+    def checkUpdate(self):
+        """Function that checks if there's a new version of the program"""
+
+        try:
+        # tries to get tags
+            gitTags = requests.get(
+                gURL,
+                headers={"User-Aagent": "TEPM"},
+                timeout=5)
+            # the request to get the github tags
+
+            if gitTags.status_code == 200:
+            # 200 is all good
+                tags = gitTags.json()
+                # grabs the json dictionary
+
+                latestTagRaw = str(tags[0]["name"])
+                # grabs the 0th element's name (latest)
+                latestTag = latestTagRaw.replace(".", "").replace("v", "").strip()
+                # strips the periods and v(ersion) identifier, cleans up
+                currentTag = tepmVer.replace(".", "").strip()
+                # the current stored tag doesn't have the v applied, just removes periods and whitespace
+
+                if latestTag > currentTag:
+                # if there's a newer version (higher number)
+                    latestURL = "https://github.com/EllEff-Git/Twitch-External-Point-Manager/releases/latest"
+                    # the URL to set
+                    self.versionTag.setText(
+                        f'TEPM v{self.version}<br>'
+                        f'Update available: '
+                        f'<a href="{latestURL}">'
+                        f'{latestTagRaw}'
+                        f'</a>'
+                    )
+                    # updates text to include a prompt + link to the newest update
+                else:
+                    self.versionTag.setText(f"TEPM v{self.version}\nLatest")
+                    # updates text
+            
+            else:
+                self.versionTag.setText(f"TEPM v{self.version}\nUpdate check failed")
+                # not status 200 (error)
+        except:
+            self.versionTag.setText(f"TEPM v{self.version}\nUpdate check failed")
+            # didn't go through at all
 
 
 
@@ -934,6 +1077,8 @@ class starterWindow(QWidget):
                 enablePoints = True
                 enableStreaks = True
                 # sets both booleans to True
+            signalStr = "Points"
+            # sets the signal string to use
 
         elif task == 2:
         # task 2 is streaks-related
@@ -946,6 +1091,8 @@ class starterWindow(QWidget):
                 enableStreaks = True
                 activeOnly = True
                 # sets the streak-related booleans to True
+            signalStr = "Points"
+            # sets the signal string to use
 
         elif task == 3:
         # task 3 is single channel
@@ -955,8 +1102,10 @@ class starterWindow(QWidget):
             # if none is set
                 self.labelSwap.emit("No channel set! Please set one first")
                 # user inform
-                QTimer.singleShot(1250, self.taskChooser("Single Channel", 3))
+                QTimer.singleShot(1250, lambda: self.taskChooser("Single Channel", 3))
                 # re-runs the same window command
+            signalStr = "Single"
+            # sets the signal string to use
 
         elif task == 4:
         # task 4 is channel predict
@@ -968,11 +1117,15 @@ class starterWindow(QWidget):
                 # sets the channel to Twitch
                 bonusString = "\n\n\nNo channel set, defaulted to Twitch..."
                 # sets user inform string
+            signalStr = "Predict"
+            # sets the signal string to use
 
         elif task == 5:
         # task 5 is browser view
             browserOnly = True
             # sets the global boolean to True (tells the later functions to not run logic)
+            signalStr = "Browser"
+            # sets the signal string to use
 
         self.labelSwap.emit(f"Starting the main TEPM program...\n\nThis window will close and a new one will open...{bonusString}")
         # swaps the label once more
@@ -992,24 +1145,22 @@ class starterWindow(QWidget):
 
         if canRun:
         # if the canRun is already set to True (returning from main)
-            QTimer.singleShot(750, self.stopper)
+            QTimer.singleShot(650, lambda: self.goToMainWindow(signalStr))
             # quits the starter application window with a small delay
         else:
         # if it's not True yet (program start)
             canRun = True
             # signs the "permission slip" for main window
-            QTimer.singleShot(2000, self.stopper)
+            QTimer.singleShot(1500, lambda: self.goToMainWindow(signalStr))
             # quits the starter application window with a small delay
 
         
 
-### Stopper ###
+### Starter -> Main Window ###
 
-    def stopper(self):
+    def goToMainWindow(self, action):
         """Function to call when a stop is needed (with a delay)"""
-        self.hide()
-        # closes the window
-        self.starterDone.emit()
+        self.starterDone.emit(action)
         # sends a signal to the pyQt signal to let the controller / main window know starter is ready
 
 
@@ -1025,17 +1176,21 @@ class starterWindow(QWidget):
 
 
 
+
+
 ### Main App Window ###
 
 class tepmWindow(QWidget):
     """The application window class"""
 
-    authValid = pyqtSignal(bool)
-    # creates a bool signal to check if the authentication code is ready
+    authValid = pyqtSignal(str)
+    """A pyQt signal to confirm the authentication token has been validated successfully and to pass the action"""
     taskText = pyqtSignal(str)
-    # creates a string signal to set the task view to
+    """A pyQt signal to set the task string"""
     browserShow = pyqtSignal(bool)
-    # creates a bool signal to check if the browser window should be shown, or a smaller preloader
+    """A pyQt signal to check if the browser window should be shown, or a smaller preloader"""
+    balanceOverride = pyqtSignal(int)
+    """A pyQt signal to temporarily override the balance (bet success)"""
 
     def __init__(self, state, passedProfile):
         super().__init__()
@@ -1065,7 +1220,7 @@ class tepmWindow(QWidget):
         # the program's main icon
         self.defaultURL = "https://twitch.tv"
         # stores the default URL to use when opening the app
-        self.programName = f"Twitch External Point Manager v{self.version}"
+        self.programName = f"Twitch External Point Manager"
         # stores the program name
         self.pid = os.getpid()
         # gets the current process' ID
@@ -1076,11 +1231,9 @@ class tepmWindow(QWidget):
         self.predictChannelPoints = 0
         """Variable to store the predict channel's point balance"""
         self.detailsWindowBool = False
-        """Whether the details window should be alive"""
+        """Whether the details window is alive"""
         self.modWindowBool = False
-        """Whether the mod window should be alive"""
-        self.doneLoading = False
-        """Boolean to check if browser is done loading"""
+        """Whether the mod window is alive"""
 
         self.currentChannel = None
         """The currently selected channel, according to predictUpdateUI"""
@@ -1118,13 +1271,17 @@ class tepmWindow(QWidget):
         # sets spacing between elements (vertical and horizontal)
         self.setLayout(self.mainLayout)
         # sets the layout
+        self.mainLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers everything to middle
+        self.mainLayout.setContentsMargins(25, 25, 25, 25)
+        # sets margins 
 
 
 
     ### Task View Grid ###
 
         self.taskGrid = QGridLayout()
-        # a layout for the tasks to fit into
+        # a layout for the tasks to fit into (browser / points)
         self.mainLayout.addLayout(self.taskGrid, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the grid to the top middle
 
@@ -1169,7 +1326,7 @@ class tepmWindow(QWidget):
 
         self.browserView.setPage(self.browserPage)
         # sets the page to use the given properties
-        self.browserView.setFixedSize(780, 450)
+        self.browserView.setMinimumSize(780, 450)
         # caps the browser size
         self.browserView.hide()
         # hides by default
@@ -1177,29 +1334,27 @@ class tepmWindow(QWidget):
         self.mainLayout.addWidget(self.browserView, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the browser to the layout
         self.browserView.setUrl(QUrl(self.defaultURL))
-        # sets "default" url to open (twitch.tv)
+        # sets "default" url to open (twitch.tv)     
 
-        if not browserOnly:
-        # if the browser-only mode isn't enabled
-            ctrl.starterWindowDone.connect(self.cssStyleLoader)
-            # calls the auth grab when the page is done loading
-        else:
-        # if the browser-only mode *is* enabled
-            self.browserWindow(False)
-            # calls the browser window with False (forces full window size and shows it)
+        ctrl.starterWindowDone.connect(self.cssStyleLoader)
+        # calls the auth grab when the page is done loading
+        self.authValid.connect(self.uiStyle)
+        # calls the ui function when auth token is checked
 
-        self.browserPage.loadFinished.connect(lambda: setattr(self, "doneLoading", True))
-        # once the browser is done loading, sets the boolean to true, allowing progress later on
-        self.browserShow.connect(self.browserWindow)
-        # calls browserWindow when the status is determined
-        self.authValid.connect(self.pwpgd)
-        # calls the delay function when the authvalid is set to True
-        self.taskText.connect(self.manageTooltip)
-        # calls manageTooltip when the task text changes
+        #self.browserPage.loadFinished.connect(self.extractAuthToken)
+        # once the browser is done loading, calls extractAuthToken
         self.refreshTokenButton.clicked.connect(self.authValidCheck)
         # calls the auth valid function when pressing the refresh button
+
+        self.browserShow.connect(self.browserWindow)
+        # calls browserWindow when the status is determined
+ 
+        self.taskText.connect(self.manageTooltip)
+        # calls manageTooltip when the task text changes
         ctrl.taskChange.connect(self.taskLabelChanger)
         # connects the controller signal to the task view changer function
+        self.balanceOverride.connect(lambda bal: self.predictPointLabel.setText(f"Balance: {bal:,.0f} points"))
+        # connects the balance override to the balance label to temporarily override it before an update
 
 
 
@@ -1303,17 +1458,19 @@ class tepmWindow(QWidget):
 
         self.predictInfoLayout = QGridLayout()
         """A nested layout that hosts basic information about the prediction(s)"""
-        self.predictInfoLayout.setSpacing(25)
+        self.predictInfoLayout.setSpacing(20)
         # adds a little more spacing
         self.predictLayout.addLayout(self.predictInfoLayout, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # top middle
 
         self.predictDetailLayout = QGridLayout()
         """A further nested layout that hosts prediction specifics (status, name, creation, pool, outcome, task)"""
-        self.predictDetailLayout.setVerticalSpacing(25)
+        self.predictDetailLayout.setVerticalSpacing(20)
         # adds a little more vertical space
         self.predictInfoLayout.addLayout(self.predictDetailLayout, 2, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # under the basic info, above the buttons
+
+    ### Prediction Channel ###
 
         self.predictChannelLabel = QLabel(" ")
         """A label that holds the current channel name"""
@@ -1325,8 +1482,54 @@ class tepmWindow(QWidget):
                 font-size: 24px;
             }
         """)
+
+        self.predictLastUpdateLabel = QLabel(" ")
+        """A label that holds the last update time"""
+        self.predictLastUpdateLabel.setToolTip("Last prediction data load timestamp")
+        # tooltip
+        self.predictLastUpdateLabel.setStyleSheet("""
+            QLabel {
+                color: white;
+                font-style: italic;
+                font-size: 13px;
+            }
+        """)
+        self.predictLastUpdateLabel.setMinimumSize(350, 40)
+        # min size
+        self.predictLastUpdateLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        
+        self.predictTaskLabel = QLabel(" ")
+        """A label that holds the current task result/string"""
+        self.predictTaskLabel.setStyleSheet("""
+            QLabel {
+                color: yellow;
+                font-style: italic;
+                font-size: 14px;
+            }
+        """)
+        self.predictTaskLabel.setToolTip("Program status inform")
+        # tooltip
+        self.predictTaskLabel.setMinimumSize(350, 40)
+        # min size
+        self.predictTaskLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+
+        self.predictChannelLabel.hide()
+        self.predictLastUpdateLabel.hide()
+        self.predictTaskLabel.hide()
+        # hides all by default
+
         self.predictInfoLayout.addWidget(self.predictChannelLabel, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the layout (top middle)
+        self.predictInfoLayout.addWidget(self.predictLastUpdateLabel, 3, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the update timestamp label between the task label and the outcome layout
+        self.predictInfoLayout.addWidget(self.predictTaskLabel, 4, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the current task label under the details layout
+
+
+
+    ### Prediction Details ###
 
         self.predictStatusLabel = QLabel(" ")
         """A label that holds the prediction status (active, locked, paid out, refunded)"""
@@ -1335,7 +1538,7 @@ class tepmWindow(QWidget):
         self.predictStatusLabel.setStyleSheet("""
             QLabel {
                 font-weight: bold;
-                font-size: 16px;
+                font-size: 17px;
             }
         """)
         # style sheet
@@ -1364,14 +1567,12 @@ class tepmWindow(QWidget):
         self.predictDetailLabel.setStyleSheet("""
             QLabel {
                 font-style: italic;
-                font-size: 12px;
+                font-size: 13px;
             }
         """)
         # style sheet
         self.predictDetailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.predictDetailLabel.hide()
-        # hides by default
 
         self.predictTimerLabel = QLabel("00:00")
         """A label that holds the prediction timer (if active)"""
@@ -1379,8 +1580,6 @@ class tepmWindow(QWidget):
         # tooltip
         self.predictTimerLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.predictTimerLabel.hide()
-        # hides by default
 
         self.predictPoolLabel = QLabel(" ")
         """A label that holds the total pool info"""
@@ -1394,9 +1593,7 @@ class tepmWindow(QWidget):
         # tooltip
         self.predictPoolLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.predictPoolLabel.hide()
-        # hides by default
-
+        
         self.predictResultLabel = QLabel("Prediction result")
         """A label that holds the result"""
         self.predictResultLabel.setToolTip("Prediction Outcome")
@@ -1412,29 +1609,12 @@ class tepmWindow(QWidget):
         
         self.predictResultLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
+
+        self.predictDetailLabel.hide()
+        self.predictTimerLabel.hide()
+        self.predictPoolLabel.hide()
         self.predictResultLabel.hide()
-        # hides by default
-
-        self.predictTaskLabel = QLabel(" ")
-        """A label that holds the current task result/string"""
-        self.predictTaskLabel.setStyleSheet("""
-            QLabel {
-                color: yellow;
-                font-style: italic;
-                font-size: 13px;
-            }
-        """)
-        self.predictTaskLabel.setToolTip("Program status inform")
-        # tooltip
-        self.predictTaskLabel.setMinimumSize(350, 50)
-        # min size
-        self.predictTaskLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # centers the text
-        self.predictTaskLabel.hide()
-        # hides by default
-
-        self.predictInfoLayout.addWidget(self.predictTaskLabel, 3, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds task label between the prediction details layout and the outcome layout (details and buttons)
+        # hides all by default
 
         self.predictDetailLayout.addWidget(self.predictStatusLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds status label to the 2nd nested layout (under the points)
@@ -1462,7 +1642,7 @@ class tepmWindow(QWidget):
         # sets lower spacing
         self.predictOutcomeLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns center
-        self.predictInfoLayout.addLayout(self.predictOutcomeLayout, 4, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictInfoLayout.addLayout(self.predictOutcomeLayout, 5, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the info layout (under the labels)
 
     ### Predict Outcome 1 ###
@@ -1875,7 +2055,7 @@ class tepmWindow(QWidget):
         """A layout that holds the current bet and balance labels"""
         self.channelPointLayout.setVerticalSpacing(10)
         # smaller spacing than most
-        self.predictInfoLayout.addLayout(self.channelPointLayout, 5, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictInfoLayout.addLayout(self.channelPointLayout, 6, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to the higher up prediction layout
 
         self.currentBetLabel = QLabel("Current Bet")
@@ -1886,9 +2066,7 @@ class tepmWindow(QWidget):
         # min size
         self.currentBetLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.currentBetLabel.hide()
-        # hides by default
-        
+
         self.predictPointLabel = QLabel(" ")
         """A label that holds the current channel's point balance"""
         self.predictPointLabel.setToolTip("Current balance for this channel")
@@ -1904,8 +2082,10 @@ class tepmWindow(QWidget):
         # style sheet
         self.predictPointLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
+
+        self.currentBetLabel.hide()
         self.predictPointLabel.hide()
-        # hides by default
+        # hides all by default
 
         self.channelPointLayout.addWidget(self.predictPointLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the channel point layout (below the bet pools/buttons)
@@ -1917,14 +2097,14 @@ class tepmWindow(QWidget):
     ### Predict Actions ###
 
         self.predictSuperLayout = QGridLayout()
-        """Layout that holds prediction elements (mod/details)"""
+        """Layout that holds prediction elements (extra/bet buttons)"""
         self.predictLayout.addLayout(self.predictSuperLayout, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the layout under the info/details layout
 
         self.predictBetLayout = QGridLayout()
         """Layout that holds the betting elements (amount + bet buttons)"""
-        self.predictSuperLayout.addLayout(self.predictBetLayout, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds into the super layout in the middle (col 1)
+        self.predictSuperLayout.addLayout(self.predictBetLayout, 1, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        # adds into the super layout to the right of the mod buttons etc (col 1)
 
         self.predictBetSpacer = QSpacerItem(200, 5)
         """Spacer that pushes the bet buttons down"""
@@ -1956,43 +2136,90 @@ class tepmWindow(QWidget):
         self.maxBetButton.setMinimumSize(70, 40)
         # min size
 
+        self.defaultBetButton = QPushButton("Default")
+        """Button to bet default amount"""
+        self.defaultBetButton.setToolTip(f"Set default bet ({int(defaultBet):,.0f})")
+        # tooltip
+        self.defaultBetButton.setMinimumSize(70, 40)
+        # min size
+
+        self.predictSuperLayout.addItem(self.predictBetSpacer, 0, 1, 1, 2)
+        # the spacer goes above everything else, spans both columns
+        self.predictBetLayout.addWidget(self.predictAmountLine, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictBetLayout.addWidget(self.maxBetButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictBetLayout.addWidget(self.defaultBetButton, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictBetLayout.addWidget(self.predictBetButton, 0, 3, alignment=Qt.AlignmentFlag.AlignCenter)
+        # the bet line, buttons - all go below the prediction details
+
+        self.predictBetButton.clicked.connect(self.predictIntermediary)
+        # connects the bet button to the predict intermediary
+        self.maxBetButton.clicked.connect(lambda: self.betMasker("Max"))
+        # connects the max bet button to the bet masking function
+        self.defaultBetButton.clicked.connect(lambda: self.betMasker("Default"))
+        # connects the default bet button to the bet masking function
+
+        self.predictAmountLine.hide()
+        self.predictBetButton.hide()
+        self.maxBetButton.hide()
+        self.defaultBetButton.hide()
+        # hides all elements by default
+
+
+
+    ### Extra Actions ###
+
+        self.extraButtonLayout = QGridLayout()
+        """A layout that contains the additional buttons (mod, details, history)"""
+        self.predictSuperLayout.addLayout(self.extraButtonLayout, 1, 0, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
+        # aligns to the right to go closer to the prediction buttons (spans 2 rows to fit next to the channel change)
+
         self.modButton = QPushButton("Mod View")
         """Button to open mod view"""
-        self.modButton.setToolTip("Open moderator view tab")
+        self.modButton.setToolTip("Open the moderator window")
         # tooltip
         self.modButton.setMinimumSize(80, 40)
         # min size
 
         self.detailsButton = QPushButton("Details")
         """Button to display further information about the bet"""
-        self.detailsButton.setToolTip("Display more information about the prediction")
+        self.detailsButton.setToolTip("Open the prediction details window")
         # tooltip
         self.detailsButton.setMinimumSize(80, 40)
         # min size
-        self.detailsButton.hide()
-        # hides by default
 
-        self.predictSuperLayout.addItem(self.predictBetSpacer, 0, 1)
-        self.predictBetLayout.addWidget(self.predictAmountLine, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictBetLayout.addWidget(self.maxBetButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictBetLayout.addWidget(self.predictBetButton, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictSuperLayout.addWidget(self.modButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictSuperLayout.addWidget(self.detailsButton, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        # the bet line and buttons go below the details
+        self.historyButton = QPushButton("History")
+        """Button to display further information about past user bets"""
+        self.historyButton.setToolTip("Open the prediction history window")
+        # tooltip
+        self.historyButton.setMinimumSize(80, 40)
+        # min size
 
-        self.predictBetButton.clicked.connect(self.predictIntermediary)
-        # connects the bet button to the predict intermediary
-        self.maxBetButton.clicked.connect(lambda: self.betMasker("Max"))
-        # connects the max bet button to the bet masking function
+        self.helpButton = QPushButton("Help")
+        """Button to display a help window"""
+        self.helpButton.setToolTip("Open the help window")
+        # tooltip
+        self.helpButton.setMinimumSize(80, 40)
+        # min size
+
+        self.extraButtonLayout.addWidget(self.modButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.extraButtonLayout.addWidget(self.detailsButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.extraButtonLayout.addWidget(self.helpButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.extraButtonLayout.addWidget(self.historyButton, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds all buttons to the button layout
+
         self.modButton.clicked.connect(self.modCheck)
-        # connects the mod button to the mod check
-        self.detailsButton.clicked.connect(ctrl.startDetails)
-        # connects the detail button to the ui window
+        # connects the mod button to the mod check (-> mod view, if mod)
+        self.detailsButton.clicked.connect(ctrl.startDetailView)
+        # connects the detail button to the details window
+        self.helpButton.clicked.connect(ctrl.startHelpView)
+        # connects the help button to the help window
+        self.historyButton.clicked.connect(ctrl.startHistoryView)
+        # connects the history button to the history window
         
-        self.predictAmountLine.hide()
-        self.predictBetButton.hide()
         self.modButton.hide()
-        self.maxBetButton.hide()
+        self.detailsButton.hide()
+        self.helpButton.hide()
+        self.historyButton.hide()
         # hides all elements by default
 
 
@@ -2001,7 +2228,7 @@ class tepmWindow(QWidget):
 
         self.predictChannelLayout = QGridLayout()
         """A layout that holds the channel swapping elements (channel entry, change button)"""
-        self.predictLayout.addLayout(self.predictChannelLayout, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictSuperLayout.addLayout(self.predictChannelLayout, 2, 1, alignment=Qt.AlignmentFlag.AlignLeft)
         # adds the layout under the bet layout
 
         self.predictChannelLine = QLineEdit()
@@ -2079,24 +2306,16 @@ class tepmWindow(QWidget):
 
     ### Element Lists ###
 
-        self.activePredictionElements = [self.predictTimerLabel]
-        """A list of elements exclusive to the active prediction style"""
-
-        self.lockedPredictionElements = []
-        """A list of elements exclusive to the locked prediction style"""
-
-        self.resolvedPredictionElements = [self.predictResultLabel]
-        """A list of elements exclusive to the resolved prediction style"""
-
-        self.pointItems = [self.progressBar, self.channelLabel, self.totalLabel, self.currentLabel]
+        self.pointGrabItems = [self.progressBar, self.channelLabel, self.totalLabel, self.currentLabel]
         """A list of point grab elements"""
 
-        self.predictItems = [self.predictChannelLabel, self.predictStatusLabel, self.predictInfoLabel,
-                            self.predictDetailLabel, self.predictTimerLabel, self.predictPoolLabel,
-                            self.predictResultLabel, self.predictTaskLabel, self.currentBetLabel,
-                            self.predictPointLabel, self.predictAmountLine, self.predictBetButton,
-                            self.maxBetButton, self.modButton, self.detailsButton, self.predictChannelLine,
-                            self.predictChannelSwapButton]
+        self.predictItems = [self.predictChannelLabel, self.predictStatusLabel, self.predictLastUpdateLabel,
+                            self.predictInfoLabel, self.predictDetailLabel, self.predictTimerLabel,
+                            self.predictPoolLabel, self.predictResultLabel, self.predictTaskLabel,
+                            self.currentBetLabel, self.predictPointLabel, self.predictAmountLine, 
+                            self.predictBetButton, self.maxBetButton, self.defaultBetButton, 
+                            self.modButton, self.detailsButton, self.helpButton, 
+                            self.historyButton, self.predictChannelLine, self.predictChannelSwapButton]
         """A list of prediction elements"""
 
 
@@ -2111,23 +2330,20 @@ class tepmWindow(QWidget):
             self.resize(500, 300)
             # the window size
         else:
-        # if the status is False (auth token not valid, need to log in or something)
-            self.setMinimumSize(800, 500)
-            self.resize(800, 500)
+        # if the status is False (auth token not valid, need to log in or something), or browser-only is enabled (then it should just be this window)
+            self.browserView.setMinimumSize(1100, 600)
+            # sets the browser size
+            self.setMinimumSize(1150, 800)
+            self.resize(1150, 800)
             # resizes the window to "normal" size
             self.browserView.show()
             # shows the browser view
             self.forceBrowserUI = True
             # sets the boolean to True, so the browser doesn't go away
-
-
-
-### Pre-Window -> Point Grabber Delay ###
-
-    def pwpgd(self, ok: bool):
-        """A small function to slow down the UI swap"""
-        QTimer.singleShot(2000, self.uiStyle)
-        # waits 2 seconds, then calls the UIstyle update
+            self.taskText.emit("")
+            # clears the task, hides the label
+            self.eop()
+            # shows the end of program/process buttons
 
 
 
@@ -2263,7 +2479,7 @@ class tepmWindow(QWidget):
                                 # adds the first 3 days worth
                         elif streak == 7:
                         # streak is exactly 7
-                            streakPoints == (1050 + 2250)
+                            streakPoints = (1050 + 2250)
                             # adds up the points earned in the first 7 days (1050 + (5 * 450))
                         else:
                         # 10 > streak > 7
@@ -2559,11 +2775,12 @@ class tepmWindow(QWidget):
 
         if action == "Menu":
         # if called for return to menu
-            ctrl.pwStopSignal.emit()
-            # calls the stopper to stop polling new prediction data
             ctrl.windowSwap("Starter")
             # shows the starter window
+            ctrl.stopPredictionWorker.emit()
+            # calls the stopper to stop polling new prediction data
         else:
+        # exit button
             app.exit()
             # closes the app
 
@@ -2571,46 +2788,44 @@ class tepmWindow(QWidget):
 
 ### UI Style Picker ###
 
-    def uiStyle(self):
+    def uiStyle(self, action:str):
         """Function to change the UI when called for"""
 
         self.taskView.hide()
         # hides the task viewer
         self.refreshTokenButton.hide()
         # hides the refresh button
+        self.browserView.hide()
+        # hides the browser view
 
-        try:
-        # tries
-            self.browserView.hide()
-            # hides the browser view
-        except:
-        # may already be hidden
-            pass
-            # skip
+        if action == "Predict":
+        # prediction screen
 
-        if predictChannel:
-        # if the prediction channel is set
-
-            self.setMinimumSize(850, 900)
-            self.resize(850, 900)
+            self.setMinimumSize(850, 950)
+            self.resize(850, 950)
             # the window size
 
-            self.swapMainUI("Predict")
+            self.swapMainUI(action)
             # swaps the elements
 
-        else:
-        # if the prediction channel isn't set
+        elif action == "Browser":
+        # if it's browser-only view
+            self.swapMainUI(action)
+            # calls the UI changer
+            self.browserWindow(True)
+            # calls the browser window with False (forces full window size and shows it)
+        
+        elif action == "Points":
+        # points/streaks view
 
-            self.swapMainUI("Points")
+            self.swapMainUI(action)
             # swaps the elements
 
-            self.mainLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            # centers everything to middle
             self.setMinimumSize(500, 300)
             self.resize(500, 300)
             # the window size
 
-            QTimer.singleShot(3000, self.startPointWorker)
+            QTimer.singleShot(2000, self.startPointWorker)
             # calls the point manager to start getting points
 
 
@@ -2620,19 +2835,24 @@ class tepmWindow(QWidget):
     def swapMainUI(self, action:str):
         """Function that swaps the UI layout between predict and point/streak grab"""
 
+        self.menuButton.hide()
+        self.exitButton.hide()
+        # hides the menu buttons
+
         if action == "Predict":
         # prediction UI activate
-            for element in self.pointItems:
+            for element in self.pointGrabItems:
                 element.hide()
                 # hides the point elements
             for element in self.predictItems:
                 element.show()
                 # shows the prediction base elements
-            for element in self.predictPoints:
+            for element in self.predictInfoItems:
                 element.show()
-                # shows the prediction point pools
+                # shows the prediction labels
 
             try:
+            # ensures the stop buttons are active in a visible layer
                 self.pointGrabStopLayout.removeWidget(self.menuButton)
                 self.pointGrabStopLayout.removeWidget(self.exitButton)
                 # removes the buttons from the point grab layout
@@ -2644,23 +2864,37 @@ class tepmWindow(QWidget):
 
             self.predictUI("Init")
             # calls the prediction UI to start
-   
+
+        elif action == "Browser":
+        # browser
+            try:
+            # ensures the stop buttons are active in a visible layer 
+                self.pointGrabStopLayout.removeWidget(self.menuButton)
+                self.pointGrabStopLayout.removeWidget(self.exitButton)
+                # removes the buttons from the point grab layout
+                self.stopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+                self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+                # adds them to the stop layout (prediction UI)
+            except:
+                print("Couldn't swap to browser")
+
         else:
         # point grab UI activate
             for element in self.predictItems:
                 element.hide()
                 # hides the prediction base elements
-            for element in self.predictPoints:
+            for element in self.predictInfoItems:
                 element.hide()
-                # hides the prediction point pools
+                # hides the prediction labels
             for element in self.predictOutcomeWidgets:
                 element.hide()
-                # hides the prediction bet options
-            for element in self.pointItems:
+                # hides the prediction widgets
+            for element in self.pointGrabItems:
                 element.show()
                 # shows the point elements
 
             try:
+            # ensures the stop buttons are active in a visible layer
                 self.stopLayout.removeWidget(self.menuButton)
                 self.stopLayout.removeWidget(self.exitButton)
                 # removes the buttons from the stop layout (prediction UI)
@@ -2677,17 +2911,19 @@ class tepmWindow(QWidget):
 
 ### Prediction UI ###
 
-    def predictUI(self, action:str = None):
+    def predictUI(self, action:str = None, channel:str = None):
         """Function that handles prediction UI changes"""
-        global predictChannel
-        # global -> local
 
         if action == "Init":
         # init action
-            ctrl.predictWorkerStart()
+            ctrl.predictionWorkerStart()
             # starts the predict/balance refresh thread loop
             self.eop()
             # calls "end of program" to show menu and exit buttons
+            ctrl.predictionTimerOverride.emit()
+            # sends a signal to skip the initial 15 second wait to get first data right away
+            self.currentChannel = predictChannel
+            # grabs the current channel from the global variable 
             
         elif action == "Swap":
         # if user pressed swap button
@@ -2698,12 +2934,23 @@ class tepmWindow(QWidget):
                 self.predictTaskLabel.setText("No streamer set, please enter one to change streams")
                 # user inform
             else:
-                predictChannel = newChannel
-                # grabs the name of the channel from the line, changes global var to match
+                ctrl.newChannelQueue.put_nowait(newChannel)
+                # adds the new channel to the channel queue
+                ctrl.newChannelSignal.emit()
+                # sends a signal to indicate a new channel
                 self.predictChannelLine.setText("")
-                # resets the text
-                ctrl.predictionTimerOverride.emit()
-                # sends a signal to override the timer and get a data refresh right away
+                # clears the text entry field
+
+        elif action == "Case":
+        # case sensitive name swap
+            newChannel = channel
+            # grabs the passed argument name
+            ctrl.newChannelQueue.put_nowait(newChannel)
+            # adds the new channel to the channel queue (doesn't request new data because the channel is the same)
+            ctrl.newChannelSignal.emit()
+            # sends a signal to indicate a new channel
+            self.predictChannelLine.setText("")
+            # clears the text entry field
 
 
 
@@ -2725,7 +2972,7 @@ class tepmWindow(QWidget):
 
 ### Prediction Data -> Update All Labels ###
 
-    def predictLabelUpdater(self, statusText: str, infoText: str, detailText: str, color: str, elementType: str):
+    def predictLabelUpdater(self, statusText: str, infoText: str, detailText: str, color: str):
         """Function to update all prediction-related labels"""
 
         self.predictStatusLabel.setText(statusText)
@@ -2736,18 +2983,6 @@ class tepmWindow(QWidget):
         # sets the details label
         self.predictStatusUpdate(color)
         # sets the text color
-
-        for label in self.predictInfoItems:
-        # goes through each label in the list of prediction labels
-            try:
-                label.show()
-                # shows it
-            except:
-                pass
-                # skips if can't
-
-        self.predictElementHider(elementType)
-        # calls the element hider to hide locked/resolved UI elements and show active
 
 
 
@@ -2780,6 +3015,9 @@ class tepmWindow(QWidget):
             # loss style (red text)
         # elif color == "White":
 
+        self.currentBetLabel.show()
+        # ensures the label is visible
+
 
 
 ### Screen Resize ###
@@ -2787,13 +3025,13 @@ class tepmWindow(QWidget):
     def screenResize(self, buttonCount: int):
         """Resizes screen based on active # of buttons"""
         
-        buttonWidth = 140
+        self.buttonWidth = 140
         # how wide one button should count as (px)
-        newSize = max(900, int(buttonCount * buttonWidth))
-        # calculates a new size for the screen width (to fit buttons), picks the larger width from 900 and (x*y)
+        newSize = max(850, int(buttonCount * self.buttonWidth))
+        # calculates a new size for the screen width (to fit buttons), picks the larger width from 850 and (x*y)
 
-        self.setMinimumSize(850, newSize)
-        self.resize(850, newSize)
+        self.setMinimumSize(newSize, 950)
+        self.resize(newSize, 950)
         # the window size
 
 
@@ -2802,8 +3040,6 @@ class tepmWindow(QWidget):
 
     def predictUpdateUI(self, prediction: dict):
         """Function to update UI based on prediction/balance data"""
-        global predictChannel
-        # global -> local
 
         totalPoints = 0
         # starts total point counter at 0
@@ -2812,6 +3048,9 @@ class tepmWindow(QWidget):
 
         if prediction["success"]:
         # if it was a success
+
+            ctrl.detailsDataSignal.emit(prediction)
+            # sends the whole dictionary to the controller -> details window
 
             oldID = self.predictionID.get("lastID", None)
             oldType = self.predictionID.get("lastType", None)
@@ -2826,8 +3065,6 @@ class tepmWindow(QWidget):
             # sets the balance to match (default 0 if not found)
             self.predictPointLabel.setText(f"Balance: {self.predictChannelPoints:,.0f} points")
             # update the balance label
-            self.predictPointLabel.show()
-            # enables the label (if it was hidden)
 
             if (oldID == eventID) and (oldType == eventType):
             # if the IDs match and the types match (same dictionary)
@@ -2839,43 +3076,28 @@ class tepmWindow(QWidget):
                 self.predictionID["lastType"] = eventType
                 # copies the new values over so they can be compared next time
 
-            if prediction.get("caseName", False):
-            # if the case sensitive name is set
-                predictChannel = prediction["caseName"]
-                # reassigns the predictionChannel to match the case sensitive one
-                self.predictChannelLabel.setText(predictChannel)
-                # sets the text of the channel label to match channel
-                self.predictChannelLabel.show()
-                # enables the label (if it was hidden)
-            
-            if not (predictChannel == self.currentChannel):
-            # if the channel being operated on is NOT the current channel stored here
-                self.currentChannel = predictChannel
-                # updates current channel
-                shouldUpdate = True
-                # forces full UI update
+            caseName = prediction.get("caseName", False)
+            # grabs the case sensitive name, if it's available
+
+            if caseName and (caseName != self.currentChannel):
+            # if the case sensitive name is set and it's not the same as the currently displayed channel
+                self.currentChannel = caseName
+                # updates the internal name scheme
 
             timeNow = datetime.datetime.now().astimezone().strftime("%#H:%M:%S")
             # grabs current time and formats it
-            self.predictTaskLabel.setText(f"Last update: {timeNow}")
+            self.predictLastUpdateLabel.setText(f"Last update: {timeNow}")
             # sets the task indicator to indicate the task that has been tasked
 
-            listOfElementLists = [self.predictOutcomeWidgets, self.predictInfoItems]
-            # list of element lists
             if shouldUpdate:
-            # if there's new data (hides these to prevent misleading data (new channel, old data) + to reset button count)
-                for elementList in listOfElementLists:
-                # goes through each list of elements
-                    for item in elementList:
-                        # goes through each element in the list
-                            try:
-                            # tries
-                                item.hide()
-                                # hides the element
-                            except:
-                            # on fail
-                                pass
-                                # does nothing
+            # if there's new data (hides these to reset button count)
+                for widget in self.predictOutcomeWidgets:
+                # goes through the outcome widgets (the betting buttons + labels)
+                    widget.hide()
+                    # hides the widget
+
+                self.predictChannelLabel.setText(self.currentChannel)
+                # updates the channel label
                 
                 if eventType == "active":
                 # if the active predict list has more than 0 elements
@@ -2896,6 +3118,23 @@ class tepmWindow(QWidget):
                     self.labelTimer.start(1000)
                     # starts it with an interval of 1000ms (1s)
 
+                else:
+                # if it's not active
+                    try:
+                    # checks if the timer is enabled
+                        if self.labelTimer:
+                        # if the label timer is set
+                            self.labelTimer = None
+                            # clears the timer
+                            self.predictTimerLabel.setText(" ")
+                            # clears the timer field
+                    except:
+                    # if it's not yet defined
+                        None
+                        # doesn't do anything
+                    self.predictTimerLabel.setText(" ")
+                    # empties the text field (preserves the spacing, no actual timer)
+
             title = prediction["title"]
             # grabs the prediction title
             outcomes = prediction["outcomes"]
@@ -2904,6 +3143,7 @@ class tepmWindow(QWidget):
             # grabs the creator name
             timestamp = prediction["timestamp"]
             # grabs the timestamp
+
             ownVoteID = prediction["votedOutcome"]
             # gets the outcome user (may have) voted for
             ownVoteSum = int(prediction["votedSum"])
@@ -2922,12 +3162,8 @@ class tepmWindow(QWidget):
 
             if not ownVoteID:
             # no vote ID = no bet (it already gets checked in grab to be for *this* event)
-                self.currentBetLabel.hide()
-                # hides the label
-            else:
-            # vote ID = vote in this event
-                self.currentBetLabel.show()
-                # shows the label
+                self.betLabelUpdater(" ", None)
+                # updates the bet label to empty
 
             for x in range(len(outcomes)):
             # goes through each outcome again (needs to do it 2x because first need the total points for labeling)
@@ -2975,7 +3211,7 @@ class tepmWindow(QWidget):
 
                 pointsX = self.predictPoints[x]
                 # grabs the xth pool label
-                optionString = f"{optionPoints:,.0f} points\n({pointShare:.0f}%)\n{optionUsers:,.0f} users"
+                optionString = f"{optionPoints:,.0f} points\n({pointShare:.1f}%)\n{optionUsers:,.0f} users"
                 # forms a string 
                 pointsX.setText(optionString)
                 # sets the label to match
@@ -2993,6 +3229,9 @@ class tepmWindow(QWidget):
                 payoutX.setText(f"{payout:.2f}x")
                 # sets the multiplier with 2 decimal precision
 
+                self.predictionNumbers[eventID][optionID] = {"payout": payout}
+                # stores the payout multiplier
+
                 self.predictOutcomeWidgets[x].show()
                 # enables the xth widget (label + button + label)
 
@@ -3003,9 +3242,8 @@ class tepmWindow(QWidget):
                 buttonCount += 1
                 # adds 1
 
-            if buttonCount >= 6 and buttonCount != self.currentSize:
-            # if there's more than or eq to 6 buttons (7 * 140 > 900, 6 will be the default size)
-            # also compares against current size to avoid resizing every time this is ran
+            if buttonCount != self.currentSize:
+            # checks if there's a different amount of buttons than last time
                 self.currentSize = buttonCount
                 # sets the current size
                 self.screenResize(buttonCount)
@@ -3015,11 +3253,21 @@ class tepmWindow(QWidget):
             # if user voted in this event
                 voteShare = ((ownVoteSum / totalPoints) * 100)
                 # calculates user's share of the total pool in percentages
-                self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points\nYour share: {voteShare:.0f}%")
-                # sets text with user share %
+                if voteShare < 1:
+                # if the vote accounts for less than 1 percent
+                    self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points\nYour bet: {voteShare:.3f}%")
+                    # sets the text with 3 decimal points (eg. 0.333%)
+                elif voteShare <= 5:
+                # if the vote accounts for less than or eq to 5 percent
+                    self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points\nYour bet: {voteShare:.2f}%")
+                    # sets the text with 2 decimal points (eg. 0.33%)
+                else:
+                # if the vote accounts for more than 5 percent
+                    self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points\nYour bet: {voteShare:.1f}%")
+                    # sets the text with 1 decimal point (eg. 0.3%)
             else:
             # user did not vote in this event
-                self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points")
+                self.predictPoolLabel.setText(f"Total pool: {totalPoints:,.0f} points\n")
                 # sets the total pool label
             
             if shouldUpdate:
@@ -3028,11 +3276,14 @@ class tepmWindow(QWidget):
                 if eventType == "active":
                 # if the prediction is active
                     self.maxBetButton.setEnabled(True)
+                    self.defaultBetButton.setEnabled(True)
                     self.predictBetButton.setEnabled(True)
                     self.predictAmountLine.setEnabled(True)
                     # enables the bet-related options
-                    self.predictLabelUpdater("Open Prediction:", f"{title}", f"{creator}, started {timestamp}", "green", "Active")
+                    self.predictLabelUpdater("Open Prediction:", f"{title}", f"{creator}, started {timestamp}", "green")
                     # calls the updater to change UI
+                    self.predictResultLabel.setText(" ")
+                    # clears the result field
 
                     if ownVoteID:
                     # if user voted
@@ -3040,15 +3291,13 @@ class tepmWindow(QWidget):
                         # forms a string to indicate bet
                         self.betLabelUpdater(betString, "Green")
                         # updates bet label
-                        self.currentBetLabel.show()
-                        # unhides
                         buttonToSelect = self.predictionKeys[eventID][ownVoteID]
                         # gets the stored option ID's (voted outcome ID) linked button identifier
-                        self.predictButtonManager("Lock", buttonToSelect)
+                        self.predictButtonManager("Vote", buttonToSelect)
                         # calls to lock the option selection buttons
                     else:
                     # user didn't vote yet
-                        self.predictButtonManager("Init")
+                        self.predictButtonManager("Init", None, True)
                         # calls for the buttons to get unlocked/reset
 
                     ctrl.timerSwap.emit(3)
@@ -3057,38 +3306,41 @@ class tepmWindow(QWidget):
                 else:
                 # prediction isn't active (locked/resolved)
                     self.maxBetButton.setEnabled(False)
+                    self.defaultBetButton.setEnabled(False)
                     self.predictBetButton.setEnabled(False)
                     self.predictAmountLine.setEnabled(False)
                     # disables the bet-related options
+                    self.predictAmountLine.setText("")
+                    # clears the prediction amount
 
                     if eventType == "locked":
                     # if the prediction is locked
-                        self.predictLabelUpdater("Closed Prediction:", f"{title}", f"{creator}, closed {timestamp}", "orange", "Locked")
+                        self.predictLabelUpdater("Closed Prediction:", f"{title}", f"{creator}, closed {timestamp}", "orange")
                         # calls the updater to change UI
+                        self.predictResultLabel.setText(" ")
+                        # clears the result field
 
                         if ownVoteID:
                         # if user voted
-                            betWin = ((ownVoteSum * self.predictionKeys[eventID][ownVoteID]) - ownVoteSum)
-                            # gets the potential bet win
+                            betWin = ((ownVoteSum * self.predictionNumbers[eventID][ownVoteID]["payout"]) - ownVoteSum)
+                            # gets the potential bet win by taking the user vote, multiplying with the payout for that option and subtracting own vote
                             betString = f"You bet {ownVoteSum:,.0f} on {self.predictionID[eventID]["title"]}\n(+{betWin:,.0f} on win)"
                             # forms a string to indicate bet
                             self.betLabelUpdater(betString, "Green")
                             # sets text to match
-                            self.currentBetLabel.show()
-                            # unhides
-                            self.predictButtonManager("Lock", self.predictionKeys[eventID][ownVoteID])
-                            # calls to lock the option selection buttons
+                            self.predictButtonManager("Vote", self.predictionKeys[eventID][ownVoteID])
+                            # calls to lock the option buttons, sets the button to show selected
                         else:
                         # user didn't vote
-                            self.predictButtonManager("Lock")
-                            # calls to lock everything
+                            self.predictButtonManager("Lock", None, True)
+                            # calls to lock everything, no selection
                     
                         ctrl.timerSwap.emit(10)
                         # if the event is locked, slows the updater down to ~normal speed
 
                     else:
                     # prediction is resolved (paid out)
-                        self.predictLabelUpdater("Paid Out Prediction:", f"{title}", f"{creator}, ended {timestamp}", "orange", "Resolved")
+                        self.predictLabelUpdater("Paid Out Prediction:", f"{title}", f"{creator}, ended {timestamp}", "orange")
                         # calls the updater to change UI
                         ctrl.timerSwap.emit(10)
                         # if the event is resolved, slows the updater way down
@@ -3106,17 +3358,18 @@ class tepmWindow(QWidget):
                         # if outcome is a refund
                             self.predictResultLabel.setText(f"Prediction was refunded!")
                             # text if prediction was refunded
-                            self.betLabelUpdater(" ")
+                            self.betLabelUpdater("Bet refunded", "Green")
                             # ensures the bet is cleared
-                            self.predictButtonManager("Init")
+                            self.predictButtonManager("Init", None, True)
                             # clears the status', unlocks buttons
                         else:
                         # if the outcome is anything else
+
+                            self.predictButtonManager("Winner", self.predictionKeys[eventID][winOutcomeID])
+                            # calls the predict button manager to highlight winner in green
+
                             if ownVoteID:
                             # if user voted
-                                self.predictButtonManager("Winner", self.predictionKeys[eventID][ownVoteID])
-                                # calls the predict button manager with the map[ID] (to get the button object) to highlight the winning button in green
-
                                 if ownVoteID == winOutcomeID:
                                 # if the stored outcome is the same as the winner
                                     self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
@@ -3137,31 +3390,18 @@ class tepmWindow(QWidget):
                                     # bet label update
                             else:
                             # no status, no bet
-                                self.predictButtonManager("Winner", self.predictionKeys[eventID][winOutcomeID])
-                                # calls the predict button manager to highlight winner in green
                                 self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
                                 # text if user did not bet
-                                self.betLabelUpdater(" ")
+                                self.betLabelUpdater("You did not bet")
                                 # bet label update
-
-            if self.detailsWindowBool:
-            # if the display window bool is True (details view is on)
-                None
-                # self.displayQueue.put(prediction)
-                # puts the prediction dictionary into the queue
-        
-            if self.modWindowBool:
-            # if the mod window bool is True (mod view is on)
-                None
-                # self.modQueue.put(prediction)
-                # puts the prediction dictionary into the queue
-
         else:
         # if it wasn't a success
-            self.predictTimerLabel.hide()
-            self.currentBetLabel.hide()
-            self.predictResultLabel.hide()
-            # these should be off 
+            self.predictLabelUpdater("No prediction", " ", " ", "Red")
+            # sets empty labels
+            self.betLabelUpdater("No bet")
+            # sets empty bet
+            self.predictPoints1.setText("0 points\n(100%)\n0 users")
+            # sets placeholder pool label
             self.predictTaskLabel.setText(f"Failed to get prediction details for {predictChannel}!")
             # changes the text to inform
 
@@ -3209,13 +3449,15 @@ class tepmWindow(QWidget):
                 # sets to none
 
             currentBet = self.predictionNumbers.get(eventID, {"option": None})["option"]
-            # grabs the current voted outcome ID 
+            # grabs the current voted outcome ID
+            balance = self.predictChannelPoints
+            # grabs the current balance for the channel to send
 
             if outcomeID:
             # if outcomeID is defined (didn't fail, was set correctly)
                 if currentBet == outcomeID or not currentBet:
                 # if there's already a bet with this outcome or no bet set yet
-                    ctrl.predictMaker.emit(bet, eventID, outcomeID, optionName)
+                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, balance)
                     # calls the pyQt signal with the details (bet int, outcomeID)
                 else:
                     self.predictTaskLabel.setText("Cannot bet on two outcomes!")
@@ -3227,68 +3469,22 @@ class tepmWindow(QWidget):
 
 
 
-### Predict Element Hider ###
-
-    def predictElementHider(self, style:str):
-        """Function to hide specific parts of the prediction UI"""
-
-        if style == "Active":
-        # style is "active"
-            listA = self.lockedPredictionElements
-            listB = self.resolvedPredictionElements
-            listC = self.activePredictionElements
-            # assigns the keep list to active, other 2 to disable
-        elif style == "Locked":
-        # style is "locked"
-            listA = self.activePredictionElements
-            listB = self.resolvedPredictionElements
-            listC = self.lockedPredictionElements
-            # assigns the keep list to locked, other 2 to disable
-        else:
-        # style is "resolved"
-            listA = self.activePredictionElements
-            listB = self.lockedPredictionElements
-            listC = self.resolvedPredictionElements
-            # assigns the keep list to resolved, other 2 to disable
-
-        for element in listA:
-        # goes through the first disabled list
-            try:
-                element.hide()
-                # disables all elements
-            except:
-                None
-        for element in listB:
-        # goes through the second disabled list
-            try:
-                element.hide()
-                # disables all elements
-            except:
-                None
-        for element in listC:
-        # goes through the keep list
-            try:
-                element.show()
-                # enables all elements
-            except:
-                None
-
-
-
 ### Prediction Buttons ###
 
-    def predictButtonManager(self, action: str = None, passedButton = None):
-        """Function to ensure the buttons only have one active at one time"""
+    def predictButtonManager(self, action: str = None, passedButton = None, refresh: bool = False):
+        """Function to ensure the buttons only have one active at one time\n
+            Action = Winner, Init, Lock (how to style buttons)\n
+            Button = QPushButton (which button to select)\n
+            Refresh = Bool (force all buttons to reset)"""
 
-        selectedButton = self.buttonGroup.checkedButton()
-        # grabs the button that's checked and sets as selected
-
-        if not selectedButton:
-        # if none are checked
-            if passedButton:
-            # if the button argument is defined
-                selectedButton = passedButton
-                # sets the selected button from button
+        if passedButton and not refresh:
+        # if the button argument is defined and a refresh isn't forced
+            selectedButton = passedButton
+            # sets the selected button from button
+        else:
+        # if no button is passed or there's a force refresh (to reset)
+            selectedButton = None
+            # sets None
 
         for button in self.predictButtonList:
         # goes through every button
@@ -3313,8 +3509,8 @@ class tepmWindow(QWidget):
                 button.setEnabled(False)
                 # buttons disabled because no bet active yet
 
-            elif action == "Init" or action == "Lock":
-            # startup / lock
+            else:
+            # startup / lock / vote
                 if button == selectedButton:
                 # if the button is the selected one
                         button.setProperty("state", "Selected")
@@ -3337,7 +3533,7 @@ class tepmWindow(QWidget):
                     button.setEnabled(True)
                     # buttons should be on by default
                 else:
-                # lock
+                # lock / vote
                     button.setEnabled(False)
                     # buttons turned off when locked (can't change bet once confirmed)
 
@@ -3390,8 +3586,8 @@ class tepmWindow(QWidget):
             currentBet = 0
             # sets to 0
 
-        if currentBet == 0 and action != "Max":
-        # if the bet is 0 (not a max bet request)
+        if currentBet == 0 and (action not in ["Max", "Default"]):
+        # if the bet is 0, and it's not a Max/Default (those set the points after)
             self.predictTaskLabel.setText("Cannot bet 0 points")
             # user inform
             return
@@ -3410,6 +3606,21 @@ class tepmWindow(QWidget):
             # user has >= 250k
                 self.predictAmountLine.setText("250000")
                 # sets Twitch max bet
+
+        elif action == "Default":
+        # if it calls to enter the default
+            if roundBalanceBet:
+            # if balance rounding is enabled
+                leftover, bet = divmod(currentBal, defaultBet)
+                # performs divmod on the current balance to form the bet 
+                # (eg. balance of 34,982, default bet of 10000 -> balance of 30,000 and a bet of 4,982)
+                self.predictAmountLine.setText(f"{bet}")
+                # sets the calculated bet into the 
+            else:
+            # balance rounding isn't enabled
+                self.predictAmountLine.setText(f"{defaultBet}")
+                # sets the configured default bet instead
+
         else:
         # if it doesn't call for max
             if currentBet > currentBal:
@@ -3425,7 +3636,7 @@ class tepmWindow(QWidget):
                     # returns False (wasn't valid)
 
             if action == "Check":
-            # if this is a check request
+            # if this is a check request, and it has made it this far
                 return True
                 # returns True (is valid)
 
@@ -3433,7 +3644,7 @@ class tepmWindow(QWidget):
 
 ### Style Loader ###
 
-    def cssStyleLoader(self):
+    def cssStyleLoader(self, action=str):
         """Function that loads the CSS stylesheet"""
 
         with open(cssPath, "r") as seess:
@@ -3441,14 +3652,20 @@ class tepmWindow(QWidget):
             self.setStyleSheet(seess.read())
             # sets the stylesheet for the class
 
-        self.extractAuthToken()
-        # calls the next stage
+        if action != "Browser":
+        # ensures it's not browser only 
+            self.extractAuthToken(action)
+            # calls the next stage
+        else:
+        # action is browser
+            self.browserWindow(True)
+            # calls the browser window shower
 
 
 
 ### Auth Token Grabber ###
 
-    def extractAuthToken(self):
+    def extractAuthToken(self, action):
         """Function to get the auth token from storage"""
 
         if not self.forceBrowserUI:
@@ -3456,10 +3673,14 @@ class tepmWindow(QWidget):
             self.browserShow.emit(True)
             # tells the browser to hide, but show the UI
 
-        while not self.doneLoading:
-        # if the browser isn't done loading yet
-            QThread.sleep(1)
-            # sleeps for a second to let it load
+        self.authTokenTimer = QTimer()
+        """A timer to forcefully skip auth token extracting if not done"""
+        self.authTokenTimer.setSingleShot(True)
+        # only activates once
+        self.authTokenTimer.timeout.connect(self.authNotValid)
+        # connects the timeout to authNotValid
+        self.authTokenTimer.start(5000)
+        # runs in 5 seconds
 
         storedCookies = self.browserView.page().profile().cookieStore()
         # gets the stored cookies
@@ -3496,20 +3717,21 @@ class tepmWindow(QWidget):
                 # stops looking for cookies
                 self.taskText.emit("Auth token found, validating...")
                 # user update
+                self.authTokenTimer.stop()
+                # cancels the timer
+                self.authValidCheck(action)
+                # calls the validation 
 
         storedCookies.cookieAdded.connect(cookieParser)
         # when a cookie gets added, calls the cookieParser
         storedCookies.loadAllCookies()
         # starts loading the cookies in local storage
-        QTimer.singleShot(5000, self.authValidCheck)
-        # waits 5 seconds, then calls the valid checker 
-        # typically, if the token is valid, it'll be done by this timer
 
 
 
 ### Auth Token Validity Check ###
 
-    def authValidCheck(self):
+    def authValidCheck(self, action):
         """Function to ensure the auth token is valid"""
         try:
         # if the token is set, tries to check a channel
@@ -3521,25 +3743,34 @@ class tepmWindow(QWidget):
             # returns the success boolean (defaults to False if none returns)
             if result:
             # if the result is True (success)
-                self.taskText.emit("Auth token successfully validated...\nStarting headless TEPM...")
+                self.taskText.emit("Auth token successfully validated...\nStarting TEPM...")
                 # user update
-                self.authValid.emit(True)
-                # sets the pyqt signal to true
+                self.authValid.emit(action)
+                # sets the pyqt signal
             else:
             # if the result is False (failure)
-                raise Exception
-                # forces an error
+                self.taskText.emit(f"Could not proceed due to {points.get("error", "Unknown Error!")}")
+                # user inform
         except:
         # if the channel check fails
-            self.taskText.emit("Token could not be validated, ensure you're logged in to Twitch\nIf this persists, ensure the hashes in hashes.json are valid")
-            # changes UI text to error
-            self.browserShow.emit(False)
-            # tells browserShow to show the window
-            try:
-                self.refreshTokenButton.show()
-                # shows the refresh button
-            except:
-                None
+            self.authNotValid()
+            # calls the invalid token function
+
+
+
+### Auth Not Valid ###
+
+    def authNotValid(self):
+        """Function to handle auth token not being valid"""
+        self.taskText.emit("Token could not be validated, ensure you're logged in to Twitch\nIf this persists, ensure the hashes in hashes.json are valid")
+        # changes UI text to error
+        self.browserShow.emit(False)
+        # tells browserShow to show the window
+        try:
+            self.refreshTokenButton.show()
+            # shows the refresh button
+        except:
+            None
 
 
 
@@ -3577,51 +3808,6 @@ class tepmWindow(QWidget):
         self.predictTaskLabel.setText(text)
         self.taskView.setText(text)
         # swaps both predict task and taskView (either one could be up)
-
-
-
-### Return to Menu ###
-
-    def returner(self):
-        """Function to call to send back to the start of the main window"""
-        self.taskView.setText("Reloading main screen...")
-        # user inform
-
-        layoutsToClear = [self.mainLayout, self.predictInfoLayout, 
-                          self.predictDetailLayout, self.predictOutcomeLayout, 
-                          self.predictSuperLayout, self.predictBetLayout, 
-                          self.predictLayout, self.stopLayout, 
-                          self.predictChannelLayout, self.channelPointLayout]
-        # list of layouts to hide items in
-
-        for layout in layoutsToClear:
-        # repeats for each layout in the list
-            try:
-            # tries (may "fail")
-                while layout.count():
-                # while there's items in the subtask layout
-                    item = layout.takeAt(0)
-                    # grabs the item at position 0
-                    try:
-                    # tries to take the widget info (can't if it's an item like spacer)
-                        widget = item.widget()
-                        # grabs the widget from the item
-                        if widget:
-                        # if there's a widget set
-                            widget.hide()
-                            # hides the widget
-                    except:
-                    # if it can't (already hidden?)
-                        pass
-            except:
-            # fail usually just means an item was deleted unexpectedly (which is fine)
-                None
-                # does nothing
-
-        self.uiStyle()
-        # calls the uistyle function to reset the UI
-        self.channels = self.getChannelList()
-        # calls the get channel list to update the channels (prediction, override, file...)
 
 
 
@@ -4475,6 +4661,8 @@ def lockPrediction(state, eventID: str) -> dict:
 
 
 
+
+
 ### Authorisation Token "Storage" ###
 
 class AppState:
@@ -4482,6 +4670,8 @@ class AppState:
     def __init__(self):
         self.authToken = None
         # simply stores the auth token here, so that everything can access it
+
+
 
 
 
@@ -4564,7 +4754,7 @@ class PointWorker(QObject):
                     if enablePoints:
                     # if points and streaks are enabled, slows down the process a bit more
                         QThread.msleep(1000)
-                        # sleeps for a second (avoids limiting)
+                        # sleeps for a second (slows down for UX + Twitch)
 
                     if activeOnly:
                     # if the boolean for the "active streaks only" is true, won't check *all* channels
@@ -4659,7 +4849,8 @@ class PointWorker(QObject):
                 # if errors shouldn't be logged to CSV
                     csvEntries[channel] = {
                         "points": foundPoints,
-                        "streak": streakNum
+                        "streak": streakNum,
+                        "error": errorBool
                     }
                     # stores the points and streak in the channel's csv entry
 
@@ -4746,13 +4937,23 @@ class PointWorker(QObject):
                 streakNum = 0
                 # sets to default of 0
 
-            csvEntries[channel] = {
-                "points": foundPoints,
-                "streak": streakNum,
-                "error": errorBool,
-                "reason": f"{points["error"]}, {streak["error"]}"
-            }
-            # forms the csvEntry for the channel
+            if enableErrorLog:
+            # if error logging is enabled
+                csvEntries[channel] = {
+                    "points": foundPoints,
+                    "streak": streakNum,
+                    "error": errorBool,
+                    "reason": f"{points["error"]}, {streak["error"]}"
+                }
+                # forms the csvEntry for the channel
+            else:
+            # error logging disabled
+                csvEntries[channel] = {
+                    "points": foundPoints,
+                    "streak": streakNum,
+                    "error": errorBool
+                }
+                # forms the csvEntry for the channel, without the error reason
 
             self.progressDict = {
                 "type": "Single",
@@ -4825,15 +5026,16 @@ class PointWorker(QObject):
 
 
 
+
+
 ### Prediction Class ###
 
-class predictionWorker(QObject):
+class PredictionWorker(QObject):
     """A class to handle the prediction data grabbing and manipulation"""
-
-    predictionDataSignal = pyqtSignal(dict, dict)
-    """A pyQt signal containing new prediction and balance data"""
-    predictionGrabStop = pyqtSignal()
-    """A pyQt signal to indicate the prediction task should end"""
+    dataSignal = pyqtSignal(dict, dict)
+    """A pyQt signal to send data back to handler function"""
+    stopSignal = pyqtSignal()
+    """A pyQt signal to indicate the worker task should end"""
 
     def __init__(self, state):
         super().__init__()
@@ -4842,18 +5044,43 @@ class predictionWorker(QObject):
         # stores the appState in self
         self.running = True
         # sets the running status to True
-        ctrl.predictMaker.connect(self.predict)
-        # connects the predict maker signal to makePrediction function
-        ctrl.pwStopSignal.connect(self.stopper)
-        # connects the stop signal to the stopper function (stops grabbing predictions)
+
         ctrl.timerSwap.connect(self.timerChange)
         # connects the timer swap signal to the timer change function
         ctrl.predictionTimerOverride.connect(self.timerOverride)
         # connects the timer override signal to the timer override function
+        ctrl.makeBet.connect(self.bet)
+        # connects the makeBet signal to the bet function
+        ctrl.newChannelSignal.connect(self.predictChannelSwap)
+        # connects the new channel signal to the swapper
+
         self.timer = 15
         # a timer stored here that determines how often the refreshes occur
         self.refresh = threading.Event()
         # a threading event to store the timer in
+        self.stopSignal.connect(self.stopper)
+        # connects the stop signal to the stopper
+
+        self.dataLock = threading.Lock()
+        # a threading lock to prevent multiple data calls at once (causes old data to appear during/after)
+
+
+
+### Prediction Channel Swap ###
+
+    def predictChannelSwap(self):
+        """Function to update the prediction channel"""
+        global predictChannel
+        # global -> local
+
+        newChannel = ctrl.newChannelQueue.get_nowait()
+        # grabs the channel from the queue
+
+        predictChannel = newChannel
+        # updates the prediction channel
+
+        self.timerOverride()
+        # calls the override to get new data quickly
 
 
 
@@ -4863,34 +5090,28 @@ class predictionWorker(QObject):
         """Function that loops function calls"""
         while self.running:
         # while the running status is True
-            self.intermed()
-            # keeps calling the intermediary command with a timed cooldown
             self.refresh.wait(timeout=self.timer)
-            # waits the timer duration if it's not set before that
+            # waits the timer duration, if a threading event is not set before that
             self.refresh.clear()
             # clears the event queue
+            self.intermed()
+            # keeps calling the intermediary command with a timed cooldown
+
+### Stop Prediction Worker ###
+
+    def stopper(self):
+        """Function to stop the worker"""
+        self.running = False
+        # sets running status to False, stops running
 
 
 
 ### Override Timer ###
 
-    def timerOverride(self):
+    def timerOverride(self) -> threading.Event:
         """Function that sets an event, overriding the current timer"""
         self.refresh.set()
         # sets an event, forcing run() to immediately run intermed, refreshing data faster
-
-
-
-### Intermed ###
-
-    def intermed(self) -> pyqtSignal:
-        """Intermediary function that merges two data grab function calls"""
-        pData = self.getPrediction()
-        # calls getPrediction to get new data
-        bData = self.getBalance()
-        # calls getBalance to get new data
-        self.predictionDataSignal.emit(pData, bData)
-        # sends the returned dictionary through the pyQt signal
 
 
 
@@ -4900,6 +5121,25 @@ class predictionWorker(QObject):
         """Function that changes the internally stored timer (to speed up or slow down refreshing)"""
         self.timer = newTime
         # swaps the timer to the new time
+
+
+
+### Intermed ###
+
+    def intermed(self) -> pyqtSignal:
+        """Intermediary function that merges two data grab function calls"""
+        if not self.dataLock.acquire(blocking=False):
+        # if the dataLock is in use, this function is already running a different call, if not, grabs the lock
+            return
+            # doesn't proceed
+        pData = self.getPrediction()
+        # calls getPrediction to get new data
+        bData = self.getBalance()
+        # calls getBalance to get new data
+        self.dataSignal.emit(pData, bData)
+        # sends the returned dictionary through the pyQt signal
+        self.dataLock.release()
+        # releases the lock, allowing a new instance of intermed() to run
 
 
 
@@ -4923,29 +5163,24 @@ class predictionWorker(QObject):
 
 
 
-### Stop Prediction Worker ###
+### Send Bet ###
 
-    def stopper(self):
-        """Function to stop the worker"""
-        self.running = False
-        # sets running status to False, stops running
-
-
-
-### Make Prediction ###
-
-    def predict(self, bet: int, eventID: str, outcomeID: str, selected: str):
-        """Function to make a bet"""
+    def bet(self, bet: int, eventID: str, outcomeID: str, selected: str, balance: int):
+        """Function to make/send a bet"""
   
         betInfo = sendPrediction(self.state, bet, eventID, outcomeID)
         # calls the prediction sender with the state, the bet amount and the prediction details
 
         if betInfo["success"]:
         # if the return is a success
-            ctrl.taskChange.emit(f"Bet {bet} on {selected}\nMay the odds be ever in your favor!")
+            ctrl.taskChange.emit(f"Bet {bet:,.0f} on {selected}\nMay the odds be ever in your favor!")
             # sets info text
             ctrl.mainWindow.predictAmountLine.setText("")
             # clears the text
+            newBal = int(balance - bet)
+            # calculates the new balance 
+            ctrl.mainWindow.balanceOverride.emit(newBal)
+            # sends a signal to indicate the new balance (to give instant UI update, rather than wait for next auto-update)
         else:
         # if the return isn't a success
             err = betInfo["error"]
@@ -4955,9 +5190,20 @@ class predictionWorker(QObject):
 
 
 
+
+
+### Mod Window ###
+
+class ModWindow(QObject):
+    """A class to handle the moderator window"""
+    stopSignal = pyqtSignal()
+    dataSignal = pyqtSignal()
+
+    print("Mod")
+
 ### Manage Prediction ###
 
-    def predictionManager(self, action:str, title:str=None, eventID:str=None, outcomeID:str=None, outcomes:list=None, duration:int=None, channelID:int=None):
+    def predictionManager(self, state, action:str, title:str=None, eventID:str=None, outcomeID:str=None, outcomes:list=None, duration:int=None, channelID:int=None):
         """Function to manage predictions\n
         Start = title, duration, outcomes, channelID\n
         Delete = eventID\n
@@ -4975,7 +5221,7 @@ class predictionWorker(QObject):
 
         if action == "Start":
         # start prediction (make a new one)
-            strDict = startPrediction(self.state, title, duration, outcomes, channelID)
+            strDict = startPrediction(state, title, duration, outcomes, channelID)
             # calls prediction starter
             if strDict["success"]:
             # if the return has success True
@@ -4985,7 +5231,7 @@ class predictionWorker(QObject):
 
         elif action == "Delete":
         # delete the prediction
-            delDict = deletePrediction(self.state, eventID)
+            delDict = deletePrediction(state, eventID)
             # calls prediction deleter
             if delDict["success"]:
                 print("deleted prediction yippie")
@@ -4994,7 +5240,7 @@ class predictionWorker(QObject):
 
         elif action == "Payout":
         # pay out an option
-            payDict = payoutPrediction(self.state, eventID, outcomeID)
+            payDict = payoutPrediction(state, eventID, outcomeID)
             # calls prediction payout
             if payDict["success"]:
                 print("paid out prediction yippie")
@@ -5003,7 +5249,7 @@ class predictionWorker(QObject):
 
         elif action == "Lock":
         # lock/close prediction
-            lockDict = lockPrediction(self.state, eventID)
+            lockDict = lockPrediction(state, eventID)
             # calls prediction locker
             if lockDict["success"]:
                 print("locked prediction, yippie")
@@ -5012,25 +5258,112 @@ class predictionWorker(QObject):
 
 
 
+
+
+class HelpWindow():
+    """A class to handle the help window"""
+    print("Help")
+
+
+
+
+
+class HistoryWindow():
+    """A class to handle the history window"""
+    print("History")
+
+
+
+
+
+class DetailsWindow(QObject):
+    """A class to handle the details window"""
+    dataSignal = pyqtSignal()
+    """A pyQt signal to send data back to handler function"""
+    stopSignal = pyqtSignal()
+    """A pyQt signal to indicate the worker task should end"""
+
+    def __init__(self, state):
+        super().__init__()
+
+        self.state = state
+        # stores the appState in self
+        self.running = True
+        # sets the running status to True
+
+        self.stopSignal.connect(self.stopper)
+        # connects the stop signal to the stopper
+        ctrl.detailsDataSignal.connect(self.detailsInput)
+        # connects the details data signal to the stopper (main -> ctrl -> here -> details window)
+
+### Run Details Worker ###
+
+    def run(self):
+        """Function that runs the details window"""
+
+        self.displayWindowSP = subprocess.Popen([detailWindowPath], stdin=subprocess.PIPE, bufsize=0, creationflags=subprocess.CREATE_NO_WINDOW)
+        # opens the prediction display window exe, passes the current working directory and allows input
+
+
+### Stop Details Worker ###
+
+    def stopper(self):
+        """Function to stop the worker"""
+        self.running = False
+        # sets running status to False, stops running
+
+### Handle Queue ###
+
+    def detailsInput(self, inputDict: dict):
+        """Function to manage the details window input"""
+
+        dataPacket = json.dumps(inputDict).encode("utf-8")
+        # converts the dictionary into json
+        self.displayWindowSP.stdin.write(dataPacket)
+        # writes the packet to the display window program (sends)
+        self.displayWindowSP.stdin.flush()
+        # ensures all messages are sent
+
+
+
+
+
 ### Controller Class ###
 
-class windowController(QObject):
+class SuperController(QObject):
     """A class to handle the cross-class/function communication and startup"""
 
-    starterWindowDone = pyqtSignal()
+### Main Window ###
+
+    starterWindowDone = pyqtSignal(str)
     """A pyQt signal to signal the starter window is done loading"""
     taskChange = pyqtSignal(str)
     """A pyQt signal to tell the main window to change the current task string"""
+
+### Super Controller ###
+
     newPData = pyqtSignal(dict)
-    """A pyQt signal to send data to prediction UI"""
-    pwStopSignal = pyqtSignal()
-    """A pyQt signal to tell the prediction worker to stop"""
-    predictMaker = pyqtSignal(int, str, str, str)
-    """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str)"""
+    """A pyQt signal to send data to mainWindow's predictUpdateUI"""
+
+### Prediction Worker ###
+
     timerSwap = pyqtSignal(int)
     """A pyQt signal to change the prediction/balance refresh timer"""
     predictionTimerOverride = pyqtSignal()
     """A pyQt signal to set an event and immediately override timer"""
+    makeBet = pyqtSignal(int, str, str, str, int)
+    """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str, balance: int)"""
+    stopPredictionWorker = pyqtSignal()
+    """A pyQt signal to stop the prediction worker"""
+    newChannelSignal = pyqtSignal()
+    """A pyQt signal to change the prediction channel"""
+    newChannelQueue = queue.Queue()
+    """A Queue to place a new prediction channel into"""
+
+### Details Worker ###
+
+    detailsDataSignal = pyqtSignal(dict)
+    """A pyQt signal to send a dictionary of data to the prediction details window"""
 
 
     def __init__(self):
@@ -5039,12 +5372,14 @@ class windowController(QObject):
         self.state = appState
         # stores the app state "storage"
 
-        self.startWindow = starterWindow()
-        # stores the starter window class
+        self.startWindow = StarterWindow()
+        # stores and starts the starter window class
         self.startWindow.show()
         # shows the window
         self.mainWindow = None
         # not defined yet
+        self.mainDefined = False
+        # boolean to store main window definition state
 
         self.startWindow.configLoaded.connect(self.mainStarter)
         # calls mainStarter once the start window is done with config
@@ -5071,59 +5406,151 @@ class windowController(QObject):
         # ensures plugins are allowed to function
         self.settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
         # ensures javascript is enabled
-    
+
+        self.stopPredictionWorker.connect(self.predictionWorkerStop)
+        # connects the signal to the function
 
 
-### Starter ###
+
+### Main Window Starter ###
 
     def mainStarter(self):
         """Function to start the main window"""
-        self.mainWindow = tepmWindow(self.state, self.browserProfile)
-        # stores the main window class
-        self.mainWindow.show()
-        # shows
+        if self.mainWindow == None:
+        # if mainWindow hasn't been defined yet (first start)
+            self.mainWindow = tepmWindow(self.state, self.browserProfile)
+            # stores and starts the main window class
+        else:
+        # if it has been defined (returning)
+            self.mainWindow.show()
+            # shows the window
 
+### Main Window Continuer ###
 
-
-### Continuer ###
-
-    def mainContinuer(self):
+    def mainContinuer(self, action):
         """Function to progress the main window"""
-        self.starterWindowDone.emit()
-        # emits signal to inform mainWindow it's done 
+        self.startWindow.hide()
+        # hides the start window
+
+        if not self.mainDefined:
+        # if the boolean is false, meaning mainWindow hasn't been defined yet
+            self.starterWindowDone.emit(action)
+            # emits signal to inform mainWindow it's done
+            self.mainDefined = True
+            # sets the boolean to True so it doesn't do it next time
+            self.mainWindow.show()
+            # shows the main window
     
 
 
-### Prediction Worker ###
+### Worker Starter Function ###
 
-    def predictWorkerStart(self):
-        """Function to start the prediction data grabbing"""
+    def startWorker(self, workerClass, dataFunction, threadName:str):
+        """Function to start the different worker classes"""
         
-        self.predictThread = QThread()
-        # makes a thread for the prediction hashing
-        self.predictThread.setObjectName("Prediction Thread")
+        thread = QThread()
+        # makes a thread for the passed worker class
+        thread.setObjectName(threadName)
         # object name (debug)
-        self.predictWorker = predictionWorker(self.state)
-        # assigns prediction worker
-        self.predictWorker.moveToThread(self.predictThread)
-        # sets the prediction worker to use the formed thread
 
-        self.predictThread.started.connect(self.predictWorker.run)
+        worker = workerClass(self.state)
+        # assigns worker to the passed class, passes state
+        worker.moveToThread(thread)
+        # sets the worker to use the formed thread
+
+        thread.started.connect(worker.run)
         # when the thread starts, runs the worker
 
-        self.predictWorker.predictionGrabStop.connect(self.predictThread.quit)
-        self.predictWorker.predictionGrabStop.connect(self.predictWorker.deleteLater)
-        # when the prediction wants to stop, quits the thread and the worker
-        self.predictThread.finished.connect(self.predictThread.deleteLater)
-        # when the thread is done (no worker), deletes the thread itself, too
+        worker.stopSignal.connect(thread.quit)
+        # connects the worker stopping to quitting the thread
+        # the class must have a signal called "stopSignal" for this to work
 
-        self.predictWorker.predictionDataSignal.connect(self.predictionDataGrab)
-        # when there's new data, connects it to data handler function
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        # deletes both the thread and the worker when the thread is done
 
-        self.predictThread.start()
+        worker.dataSignal.connect(dataFunction)
+        # connects the passed function (function that handles the next data) to the worker's signal
+        # the class must have a signal called "dataSignal" that connects to this
+
+        thread.start()
         # starts the thread
 
+        return worker, thread
+        # returns the references to both the worker and thread
 
+
+
+### Prediction Worker Start ###
+
+    def predictionWorkerStart(self):
+        """Function to start the prediction worker thread/class"""
+        self.predictWorker, self.predictThread = self.startWorker(
+            PredictionWorker,
+            # the class to start
+            self.predictionDataGrab,
+            # the data handler
+            "PredictionThread"
+            # name of the thread
+        )
+        # calls startWorker with given arguments to start a thread/worker for prediction grabbing 
+
+### Prediction Worker Stop ###
+
+    def predictionWorkerStop(self):
+        """Function to stop the prediction worker thread/class"""
+        if hasattr(self, "predictWorker") and self.predictWorker:
+        # if the worker exists and is defined
+            self.predictWorker.stopSignal.emit()
+            # sends a signal telling the worker to stop
+        
+        if hasattr(self, "predictThread") and self.predictThread:
+        # if the thread exists and is defined
+            self.predictThread.quit()
+            # calls for the thread to quit (stop)
+            self.predictThread.wait()
+            # waits for the thread to stop
+
+
+
+### Details View Worker Start ###
+
+    def detailsWorkerStart(self):
+        """Function to start the details worker thread/class"""
+        self.detailsWorker, self.detailsThread = self.startWorker(
+            DetailsWindow,
+            self.detailsData,
+            "DetailsThread"
+        )
+
+### Details View Worker Stop ###
+
+    def detailsWorkerStop(self):
+        """Function to stop the details worker thread/class"""
+        if hasattr(self, "detailsWorker") and self.detailsWorker:
+        # if the worker exists and is defined
+            self.detailsWorker.stopSignal.emit()
+            # sends a signal telling the worker to stop
+        
+        if hasattr(self, "detailsThread") and self.detailsThread:
+        # if the detailsThread exists and is defined
+            self.detailsThread.quit()
+            # calls for the thread to quit (stop)
+            self.detailsThread.wait()
+            # waits for the thread to stop
+
+### Mod View Worker Start ###
+
+    def moderatorWorkerStart(self):
+        """Function to start the moderator view worker thread/class"""
+        self.moderatorWorker, self.moderatorThread = self.startWorker()
+        # incomplete
+
+### Details Data ###
+
+    def detailsData(self, reply: str):
+        """?"""
+        print(reply)
 
 ### Prediction Data ###
 
@@ -5275,30 +5702,18 @@ class windowController(QObject):
         """Function to swap active window"""
         if window == "Starter":
         # calls for starter window to be visible (start -> main -> start)
-            self.mainWindow.hide()
-            # hides the main window
             self.startWindow.returner()
             # calls the returner function to send back to the start
             self.startWindow.show()
             # shows the starter window
+            self.mainWindow.hide()
+            # hides the main window
         else:
         # not starter (main -> start -> main)
+            self.mainWindow.show()
+            # re-shows the main window
             self.startWindow.hide()
             # hides the starter window
-            self.mainStarter()
-            # calls mainStarter to restart the main class
-            self.mainWindow.show()
-            # shows the main window
-
-
-
-### Details View ###
-
-    def startDetails(self):
-        """Function to open the details view"""
-        ctrl.taskChange.emit("Details view is currently unavailable")
-        #predictionWinStart(self.displayLocalThread)
-        # starts the window starter
 
 
 
@@ -5312,13 +5727,43 @@ class windowController(QObject):
 
 
 
+### Details View ###
+
+    def startDetailView(self):
+        """Function to open the prediction details view"""
+        ctrl.taskChange.emit("Details view is not yet implemented")
+        #detailWinStart(self.detailLocalThread)
+        # starts the details window
+
+
+
+### History View ###
+
+    def startHistoryView(self):
+        """Function to open the prediction history view"""
+        ctrl.taskChange.emit("History window is not yet implemented")
+        #historyWindowStart(self.historyLocalThread)
+        # starts the history window
+
+
+
+### Help View ###
+
+    def startHelpView(self):
+        """Function to open the help window"""
+        ctrl.taskChange.emit("Help window is not yet implemented")
+        #helpWindowStart(self.helpLocalThread)
+        # starts the help window
+
+
+
 ### Window Startup ###
 
 app = QApplication(sys.argv)
 """The application"""
 appState = AppState()
 """App state instance to store some variables"""
-ctrl = windowController()
+ctrl = SuperController()
 """The window controller class"""
 
 sys.exit(app.exec())
