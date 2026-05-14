@@ -6,7 +6,8 @@
 ### Current features: 
 - Get channel point balance, streaks or both for any channel (or a list of channels)
 - View prediction details for a single channel
-- Place bets on predictions
+- Place bets on predictions 
+- Predictions feature a configurable default bet, max bet, keybinds and more detailed stats than Twitch
 
 ### Planned features:
 - A further detail view of predictions (more in-depth point tracking, top predictors, spread visualisation)
@@ -32,11 +33,18 @@
 
 ## So, why?
 
-#### Very first world problem, but I just really hate the default Twitch prediction screen/chat view
-##### Especially with the new UI updates, I can't even see my points when I try to bet...
-#### This program can also show channel points on channels where they're otherwise disabled
-#### Mainly, though, if you're like me and enjoy endless numbers wherever possible, why not?
-##### *Do note that this program does not count as "presence in chat", so you won't earn any points or drops with this tool!*
+- Very first world problem, but I just really hate the default Twitch prediction screen/chat view
+##### Especially with the new UI updates, I can't see my points when I try to bet and sometimes the predictions don't even load right away... <br>
+
+- Predicting with TEPM is not only more detailed, but is also faster and isn't subject to having the predictions not appear <br>
+
+- This program can also show channel points on channels where they're otherwise disabled <br>
+
+- Participating in predictions with this program doesn't count as presence in the stream, so you can keep earning points elsewhere
+##### Very good for Drops, too, since presence in multiple streams can mess with Drops progression <br>
+
+- Mainly, though, if you're like me and enjoy endless numbers wherever possible, why not?
+##### *Do note that since this program does not count as "presence in chat", you won't earn any points or drops leaving this on!*
 
 <br>
 
