@@ -8,10 +8,11 @@
 - View prediction details for a single channel
 - Place bets on predictions 
 - Predictions feature a configurable default bet, max bet, keybinds and more detailed stats than Twitch
+- Stores prediction results to file, see past bet outcomes
+
 
 ### Planned features:
 - A further detail view of predictions (more in-depth point tracking, top predictors, spread visualisation)
-- Saving own bet data to file (to see trends of win/loss / point accumulation over time)
 - A mod view to manage predictions (start, lock, pay out and delete)
 
 <br>

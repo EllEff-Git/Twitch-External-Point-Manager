@@ -5,9 +5,7 @@ from PyQt6.QtGui import *
 from PyQt6.QtWidgets import *
 # PyQt is the application/window framework (UI for the whole app)
 
-import atexit
 
-atexit.register(lambda: print("PROCESS EXITING"))
 
 directory = None
 """The base directory of the program, where TEPMpd.exe resides"""

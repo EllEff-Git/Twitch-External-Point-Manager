@@ -33,8 +33,6 @@ class asyncHelpWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-
-
     ### Init / Basic ###
 
         self.show()
@@ -54,7 +52,7 @@ class asyncHelpWindow(QMainWindow):
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-        self.setMinimumSize(QSize(600, 500))
+        self.setMinimumSize(QSize(900, 500))
         # the window size
 
     ### UI Elements ###
@@ -75,19 +73,30 @@ class asyncHelpWindow(QMainWindow):
         self.helpLabel = QLabel()
         # the help text
         self.helpLabel.setText("TEPM\n\n"
+                            "To vote (bet) on predictions, enter a sum of points to gamble\n"
+                            "You can enter a sum by either manually entering one in the Bet Amount field\n"
+                            "or by clicking the Max or Default buttons, which will enter a value based on your current balance and/or the config\n"
+                            "To confirm your bet, click the Bet button\n\n"
+                            "You can change the stream by entering a different stream in the Change Channel field\n"
+                            "To confirm the swap, press the Enter key or click the Change button\n\n"
                             "Keybinds:\n\n"
-                            "Quick-bet: Ctrl+B\n"
+                            "Confirm bet: Ctrl+B\n"
                             "Set max bet: Ctrl+M\n"
                             "Set default bet: Ctrl+D\n"
-                            "Clear bet field: Ctrl+Y\n"
                             "Halve current bet: Ctrl+H\n"
+                            "Clear bet field: Ctrl+Y\n"
+                            "Save own predictions: Ctrl+S\n\n"
+                            "Please use the exit button to close, in order to save prediction details!\n"
+                            "Exiting the program via Alt+F4 or other means will NOT SAVE your prediction history\n\n"
+                            "Currently, re-opening any external window requires 2x clicks - it'll prompt once about already being open\n"
+                            "This compromise was made to not have to poll the status, which would increase resource use for a small QoL thing"
                             )
         # the text to display
         self.helpLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns text to center
 
         self.mainLayout.addWidget(self.helpLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to label
+        # adds to layout
 
  
 
