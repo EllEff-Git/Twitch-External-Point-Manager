@@ -2260,7 +2260,7 @@ class tepmWindow(QWidget):
         # connects the detail button to the details window
         self.helpButton.clicked.connect(lambda: ctrl.startHelpSignal.emit())
         # connects the help button to the help window
-        self.historyButton.clicked.connect(lambda: (self.savePredictions, ctrl.startHistorySignal.emit()))
+        self.historyButton.clicked.connect(lambda: (self.savePredictions(True)))
         # connects the history button to the prediction save function and history window
     
 
@@ -2821,7 +2821,7 @@ class tepmWindow(QWidget):
 
 ### Save Prediction History ###
 
-    def savePredictions(self):
+    def savePredictions(self, start:bool = False):
         """Function to save the prediction history"""
 
         if os.path.exists(predictHistoryPath):
@@ -2845,6 +2845,11 @@ class tepmWindow(QWidget):
 
         self.predictionUserInform("Saved prediction history!")
         # user inform
+
+        if start:
+        # if the start boolean is set to True
+            ctrl.startHistorySignal.emit()
+            # sends signal to start the history view
         
 
 
