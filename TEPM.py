@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.17.0757"
+tepmVer = "0.5.17.0931"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -258,21 +258,28 @@ class StarterWindow(QWidget):
         self.profilePickLayout = QGridLayout(self.profilePickPage)
         # layout to hold the profile picking
 
-        self.labelSwap.emit("No profile configured, please enter a new profile name:\nThis is purely cosmetic")
-        # swaps the label
+        self.profilePickText = QLabel("No profile configured, please enter a new profile name:\nThis is purely cosmetic")
+        # instructions 
+        self.profilePickText.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers text
 
         self.profileNameField = QLineEdit()
         # entry for profile name
         self.profileNameField.setPlaceholderText("Default")
         # sets the default text
+        self.profileNameField.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers text
+        self.profileNameField.setFixedSize(200, 50)
+        # sets size
 
         self.usernameButton = QPushButton("Submit")
         # makes a new button to save the name
         self.usernameButton.setFixedSize(100, 50)
         # sets size
 
-        self.profilePickLayout.addWidget(self.profileNameField, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
-        self.profilePickLayout.addWidget(self.usernameButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.profilePickLayout.addWidget(self.profilePickText, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.profilePickLayout.addWidget(self.profileNameField, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.profilePickLayout.addWidget(self.usernameButton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the button and profile name field to layout
 
         self.usernameButton.clicked.connect(self.userNameGrab)
@@ -744,13 +751,6 @@ class StarterWindow(QWidget):
         global profileName
         # global -> local (this gets set here if the folder already exists)
 
-        if not os.path.exists(profilePath):
-        # checks if the profile folder path is(n't) valid yet
-            self.labelSwap.emit("No Profile folder found, creating one!")
-            # user inform
-            os.mkdir(profilePath)
-            # makes a directory at the given path
-
         if not os.path.exists(textPath):
         # checks if the channel list.txt file exists yet
             self.labelSwap.emit("No Channel List text file found, creating default!")
@@ -820,6 +820,11 @@ class StarterWindow(QWidget):
             # stores the profile name as the chosen name
             waitTimer = 1200
             # sets the wait timer to 1200 ms, shorter text with no instructions
+
+        profileDir = os.path.join(dataDir, "Profile", profileName)
+        # forms a directory path
+        os.mkdir(profileDir)
+        # makes a new directory inside the Profile/(given name)
 
         QTimer.singleShot(waitTimer, self.hashLoader)
         # waits a time, then calls intermediary function
@@ -938,16 +943,29 @@ class StarterWindow(QWidget):
         streakMap["autoAddStreaks"] = self.autoAddStreaksCheckbox.isChecked()
         streakMap["autoRemoveStreaks"] = self.autoRemoveStreaksCheckbox.isChecked()
         streakMap["enableErrorsInCSV"] = self.enableCSVErrorsCheckbox.isChecked()
-        streakMap["defaultBet"] = self.defaultBetLine.text().strip()
         streakMap["roundBalanceBet"] = self.roundBalanceBetCheckbox.isChecked()
         streakMap["exampleChannel"] = "exampleChannelID"
         # adds map settings
 
-        autoAddStreaks = self.autoAddStreaksCheckbox.isChecked()
-        autoRemoveStreaks = self.autoRemoveStreaksCheckbox.isChecked()
-        enableErrorLog = self.enableCSVErrorsCheckbox.isChecked()
-        defaultBet = int(self.defaultBetLine.text().strip())
-        roundBalanceBet = self.roundBalanceBetCheckbox.isChecked()
+        defaultBetRaw = self.defaultBetLine.text().strip()
+        # grabs the bet size from the field
+        if defaultBetRaw == "" or defaultBetRaw == "0":
+        # if it's empty or 0
+            defaultBetRaw = 5000
+            # overrides to default 5,000
+            defaultString = "Default bet not set, or set to 0 - using default: 5,000"
+            # sets default bet string warning
+        else:
+            defaultString = ""
+            # empty string
+        streakMap["defaultBet"] = defaultBetRaw 
+        # saves to map
+
+        autoAddStreaks = streakMap["autoAddStreaks"]
+        autoRemoveStreaks = streakMap["autoRemoveStreaks"]
+        enableErrorLog = streakMap["enableErrorsInCSV"]
+        defaultBet = int(streakMap["defaultBet"])
+        roundBalanceBet = streakMap["roundBalanceBet"]
         # sets the global variables based on the entry values
 
         with open(streakMapPath, "w") as strk:
@@ -955,8 +973,8 @@ class StarterWindow(QWidget):
             json.dump(streakMap, strk, indent=3)
             # dumps the map into file
 
-        self.labelSwap.emit("Configuration modified")
-        # changes label
+        self.labelSwap.emit(f"Configuration modified\n{defaultString}")
+        # changes label, adds default bet warning if one is defined
         
         if self.optionReturn:
         # if the boolean is true
@@ -1169,6 +1187,8 @@ class StarterWindow(QWidget):
         """Function to call to send back to the start of the start window"""
         self.labelSwap.emit("Reloading start menu...")
         # user inform
+        self.optionsButton.setEnabled(True)
+        # enables the options button
         self.mainStack.setCurrentWidget(self.taskPage)
         # sets main page as active page 
 
@@ -1323,11 +1343,19 @@ class tepmWindow(QWidget):
         self.browserLayout = QGridLayout(self.browserStackPage)
         """Layout to store browser elements"""
 
+    ### Browser Page Text ###
+
+        self.browserTask = QLabel(" ")
+        # browser page view task text
+
+        self.browserLayout.addWidget(self.browserTask, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds it to the left side of the browser page
+        
     ### Retry Token Button ###
 
         self.refreshTokenButton = QPushButton("Refresh Token")
         # a button to try to refresh the token
-        self.refreshTokenButton.setFixedSize(125, 25)
+        self.refreshTokenButton.setFixedSize(125, 40)
         # sets a size
         self.refreshTokenButton.setToolTip("Press to attempt token re-validation")
         # tooltip
@@ -1335,8 +1363,8 @@ class tepmWindow(QWidget):
         self.refreshTokenButton.clicked.connect(lambda: self.authValidCheck(self.authInvalidAction))
         # calls the auth valid function when pressing the refresh button (passes the action user was trying to do before)
 
-        self.browserLayout.addWidget(self.refreshTokenButton, 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
-        # adds it to the right side of the taskView
+        self.browserLayout.addWidget(self.refreshTokenButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds it to the right side of the browser page
 
     ### Browser ###
 
@@ -3885,11 +3913,14 @@ class tepmWindow(QWidget):
     def extractAuthToken(self, action):
         """Function to get the auth token from storage"""
 
+        self.authInvalidAction = action
+        # stores the action
+
         self.authTokenTimer = QTimer()
         """A timer to forcefully skip auth token extracting if not done"""
         self.authTokenTimer.setSingleShot(True)
         # only activates once
-        self.authTokenTimer.timeout.connect(self.authNotValid)
+        self.authTokenTimer.timeout.connect(lambda: self.authNotValid(action))
         # connects the timeout to authNotValid
         self.authTokenTimer.start(5000)
         # runs in 5 seconds
@@ -3974,7 +4005,7 @@ class tepmWindow(QWidget):
 
     def authNotValid(self, action:str):
         """Function to handle auth token not being valid"""
-        self.taskText.emit("Token could not be validated, ensure you're logged in to Twitch\nIf this persists, ensure the hashes in hashes.json are valid")
+        self.browserTask.setText("Token could not be validated, ensure you're logged in to Twitch\nIf this persists, ensure the hashes in hashes.json are valid")
         # changes UI text to error
         self.mainStack.setCurrentWidget(self.browserStackPage)
         # sets the browser view active
@@ -5839,27 +5870,6 @@ class SuperController(QObject):
         self.startWindow.starterDone.connect(self.mainContinuer)
         # when the starter is done, signals the next stage (mainWindow -> extractAuthToken)
 
-        self.profilePath = profilePath
-        # stores the profile path from global
-        self.profileName = profileName
-        # stores the profile name from global
-
-        self.browserProfile = QWebEngineProfile(self.profileName, self)
-        # sets the browser profile to the given profile (default is Default)
-        self.browserProfile.setCachePath(os.path.join(self.profilePath, self.profileName))
-        # sets the cache path (<installation>/Data/Profile/<profileName>/)
-        self.browserProfile.setPersistentStoragePath(os.path.join(self.profilePath, self.profileName))
-        # sets the storage path (<installation>/Data/Profile/<profileName>/)
-
-        self.settings = self.browserProfile.settings()
-        # manages the browser settings
-        self.settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
-        # ensures local storage is enabled 
-        self.settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
-        # ensures plugins are allowed to function
-        self.settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
-        # ensures javascript is enabled
-
         self.stopPredictionWorker.connect(self.predictionWorkerStop)
         # connects the signal to the function
 
@@ -5905,6 +5915,28 @@ class SuperController(QObject):
         """Function to start the main window"""
         if self.mainWindow == None:
         # if mainWindow hasn't been defined yet (first start)
+
+            self.profilePath = profilePath
+            # stores the profile path from global
+            self.profileName = profileName
+            # stores the profile name from global
+
+            self.browserProfile = QWebEngineProfile(self.profileName, self)
+            # sets the browser profile to the given profile (default is Default)
+
+            self.settings = self.browserProfile.settings()
+            # manages the browser settings
+            self.settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, True)
+            # ensures local storage is enabled 
+            self.settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+            # ensures plugins are allowed to function
+            self.settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+            # ensures javascript is enabled
+            self.browserProfile.setCachePath(os.path.join(self.profilePath, self.profileName))
+            # sets the cache path (<installation>/Data/Profile/<profileName>/)
+            self.browserProfile.setPersistentStoragePath(os.path.join(self.profilePath, self.profileName))
+            # sets the storage path (<installation>/Data/Profile/<profileName>/)
+
             self.mainWindow = tepmWindow(self.state, self.browserProfile)
             # stores and starts the main window class
         else:
