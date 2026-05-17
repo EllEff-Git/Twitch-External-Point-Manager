@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.15.1002"
+tepmVer = "0.5.17.0757"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -85,6 +85,9 @@ hashMap = {}
 """The map that holds all the hashes and related information"""
 excludedEntries = ["enableErrorsInCSV", "autoAddStreaks", "autoRemoveStreaks", "defaultBet", "roundBalanceBet" "exampleChannel"]
 """A list of streakMap entries that shouldn't count for the streak list"""
+
+
+
 overrideChannel = None
 """The single channel name, if using single channel"""
 predictChannel = None
@@ -93,8 +96,6 @@ canRun = False
 """Boolean that determines if the main window can start (True after first window completes)"""
 activeOnly = False
 """Boolean that determines if the grabbed streaks should be previously active"""
-browserOnly = False
-"""Boolean that determines if the main window should run in browser-only view"""
 modWindowBool = False
 """Boolean that determines if the mod view window is open or not"""
 displayWindowBool = False
@@ -106,12 +107,13 @@ reqSession = requests.Session()
 """A request session that stores cached request information"""
 rURL = "https://gql.twitch.tv/gql"
 """The Twitch endpoint to make requests to"""
-gURL = "https://api.github.com/repos/EllEff-Git/SBO/tags"
-"""The GitHub URL to make an update request to"""
-# real url is "https://api.github.com/repos/EllEff-Git/Twitch-External-Point-Manager/tags"
+gURL = "https://api.github.com/repos/EllEff-Git/Twitch-External-Point-Manager/tags"
+"""The GitHub URL to make an update check request to"""
 
-os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-widevine --enable-gpu --enable-hls --disable-webgpu"
-# environment flags for the chromium webengine (directory stuff, ensures hardware acceleration is on)
+
+
+os.environ["QT_WEBENGINE_CHROMIUM_FLAGS"] = f"--user-data-dir={profilePath} --profile-directory={profileName} --enable-gpu --disable-webgpu --disable-logging --log-level=3"
+# environment flags for the chromium webengine
 
 
 
@@ -141,8 +143,6 @@ class StarterWindow(QWidget):
     def __init__(self):
         super().__init__()
 
-
-
     ### Init / Basic ###
 
         self.version = tepmVer
@@ -155,50 +155,42 @@ class StarterWindow(QWidget):
         self.optionReturn = False
         # boolean to store whether user has visited options or not (changes visuals)
 
-
-
     ### Basic Window Setup ###
 
         self.setWindowTitle(self.programName)
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-        self.setMinimumSize(1000, 660)
+        self.setMinimumSize(1000, 650)
         # the window size
-
-
 
     ### UI Elements ###
 
+        self.mainStack = QStackedWidget()
+        """A stacked widget to show/hide individual pages"""
         self.mainLayout = QGridLayout()
-        """The main layout that contains every sublayout and widget"""
+        """The main layout that contains the main elements"""
         self.mainLayout.setSpacing(0)
         # removes spacing
         self.mainLayout.setContentsMargins(20, 20, 20, 20)
         # sets content margins
+        self.mainLayout.addWidget(self.mainStack)
+        # adds the stack to the main layout
+        self.setLayout(self.mainLayout)
+        # sets the container to fill the window
 
-        self.mainLayout.setRowMinimumHeight(0, 50)
-        self.mainLayout.setRowMinimumHeight(1, 100)
-        self.mainLayout.setRowMinimumHeight(2, 100)
-        self.mainLayout.setRowMinimumHeight(3, 50)
-        self.mainLayout.setRowMinimumHeight(4, 50)
-        # sets the minimum height for rows
+    ### Main Page ###
 
-        self.mainLayout.setColumnMinimumWidth(0, 100)
-        self.mainLayout.setColumnMinimumWidth(1, 200)
-        self.mainLayout.setColumnMinimumWidth(2, 400)
-        self.mainLayout.setColumnMinimumWidth(3, 200)
-        self.mainLayout.setColumnMinimumWidth(4, 100)
-        # sets the minimum width for columns
+        self.mainPage = QWidget()
+        # widget to hold the main page elements
+        self.mainPage.setObjectName("Starter Main Page")
+        # object name
+        self.mainStack.addWidget(self.mainPage)
+        # adds page to stack
+        self.mainPageLayout = QGridLayout(self.mainPage)
+        # layout to hold the main page elements
 
-        self.mainLayout.setColumnStretch(0, 0)
-        self.mainLayout.setColumnStretch(1, 1)
-        self.mainLayout.setColumnStretch(2, 1)
-        self.mainLayout.setColumnStretch(3, 1)
-        self.mainLayout.setColumnStretch(4, 0)
-        # allows columns 1, 2 and 3 (center) to stretch
-        self.mainLayout.setRowStretch(2, 1)
-        # allows row 2 (center) to stretch
+    ### Main Label ### 
 
         self.mainLabel = QLabel()
         """A label to hold the main information about current process"""
@@ -210,25 +202,8 @@ class StarterWindow(QWidget):
         # makes the text wrap if it's too big
         self.mainLabel.setMaximumSize(400, 150)
         # tells the label to prefer the main layout's size
-        self.mainLayout.addWidget(self.mainLabel, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainPageLayout.addWidget(self.mainLabel, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the label to the main layout (should be top, always)
-
-
-
-    ### Hideable/Showable Elements ###
-
-        self.userInputField = QLineEdit()
-        """A text field entry for channel selection"""
-        self.userInputField.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # alings to center
-        self.userInputField.setFixedSize(300, 30)
-        # sets size
-        self.mainLayout.addWidget(self.userInputField, 2, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the qline to layout (row 1, col 0)
-        self.userInputField.hide()
-        # hides by default
-
-
 
     ### Version ###
 
@@ -240,10 +215,8 @@ class StarterWindow(QWidget):
         # aligns the text itself to the left
         self.versionTag.setOpenExternalLinks(True)
         # allows opening links (in case of new update)
-        self.mainLayout.addWidget(self.versionTag, 7, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.mainPageLayout.addWidget(self.versionTag, 2, 0, alignment=Qt.AlignmentFlag.AlignLeft)
         # adds to the bottom left corner
-
-
 
     ### Exit ###
 
@@ -255,18 +228,501 @@ class StarterWindow(QWidget):
         # size
         self.exitButton.clicked.connect(lambda: app.exit())
         # connects to exit
-        self.mainLayout.addWidget(self.exitButton, 7, 2, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter)
+        self.mainPageLayout.addWidget(self.exitButton, 2, 1, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter)
         # adds to layout (bottom middle)
 
+    ### Options Button ###
+
+        self.optionsButton = QPushButton("Options")
+        # adds options button
+        self.optionsButton.setToolTip("Open the options/config view")
+        # tooltip
+        self.optionsButton.setMinimumSize(100, 50)
+        # sets size
+        self.optionsButton.clicked.connect(lambda: self.mainStack.setCurrentWidget(self.configPage))
+        # connects the options button to display the options page
+        self.optionsButton.setEnabled(False)
+        # disabled by default
+
+        self.mainPageLayout.addWidget(self.optionsButton, 2, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        # adds the button to the right bottom corner
+
+    ### Profile Name Picking ###
+
+        self.profilePickPage = QWidget()
+        # widget to hold the profile name picking layout
+        self.profilePickPage.setObjectName("Profile Name Page")
+        # object name
+        self.mainStack.addWidget(self.profilePickPage)
+        # adds page to stack
+        self.profilePickLayout = QGridLayout(self.profilePickPage)
+        # layout to hold the profile picking
+
+        self.labelSwap.emit("No profile configured, please enter a new profile name:\nThis is purely cosmetic")
+        # swaps the label
+
+        self.profileNameField = QLineEdit()
+        # entry for profile name
+        self.profileNameField.setPlaceholderText("Default")
+        # sets the default text
+
+        self.usernameButton = QPushButton("Submit")
+        # makes a new button to save the name
+        self.usernameButton.setFixedSize(100, 50)
+        # sets size
+
+        self.profilePickLayout.addWidget(self.profileNameField, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.profilePickLayout.addWidget(self.usernameButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        # adds the button and profile name field to layout
+
+        self.usernameButton.clicked.connect(self.userNameGrab)
+        # on click, calls the next part
 
 
 
-    ### Intermediary ###
+    ### Configuration Page ###
 
-        self.setLayout(self.mainLayout)
-        # sets the container to fill the window
+        self.configPage = QWidget()
+        # config page widget
+        self.configPage.setObjectName("Configuration Page")
+        # object name
+        self.mainStack.addWidget(self.configPage)
+        # adds page to stack
+        self.configLayout = QGridLayout(self.configPage)
+        # creates a layout just for the config file
+
+        self.configTaskText = QLabel("Configure TEPM\nHover over any text field to see more details")
+        # the config page prompt
+        self.configTaskText.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # aligns text to center
+        self.configLayout.addWidget(self.configTaskText, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to top of config page
+
+        self.defaultBetMask = QIntValidator(0, 250000)
+        """A validator for the default bet"""
+        
+        self.autoAddStreaksCheckbox = QCheckBox("Auto-add streaks")
+        """Checkbox for automatically adding streaks"""
+        self.autoAddStreakText = QLabel("Automatically add active streaks to list")
+        """Text helper for streak addition"""
+        self.autoAddStreakText.setToolTip("When checking points and streaks, adds active streaks to the streak list file\n"
+                                        "Active streak = longer than 1")
+        # tooltip
+
+        self.autoRemoveStreaksCheckbox = QCheckBox("Auto-remove streaks")
+        """Checkbox for automatically removing inactive streaks"""
+        self.autoRemoveStreaksText = QLabel("Automatically remove stale streaks")
+        """Text helper for streak removal"""
+        self.autoRemoveStreaksText.setToolTip("Removes streaks that have been broken (0 streak)")
+        # tooltip
+
+        self.enableCSVErrorsCheckbox = QCheckBox("Store errors")
+        """Checkbox for enabling errors in CSV"""
+        self.enableCSVErrorsText = QLabel("Whether to add any point grab errors into CSV")
+        """Text helper for CSV errors"""
+        self.enableCSVErrorsText.setToolTip("Save any error reasons into the CSV with point/streak data\n"
+                                            "Error booleans are saved regardless of this option")
+        # tooltip
+
+        self.defaultBetLine = QLineEdit()
+        """Line to edit the default bet value"""
+        self.defaultBetLine.setValidator(self.defaultBetMask)
+        # sets a validator to only accept digits with a max bet of 250000
+        self.defaultBetLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.defaultBetLine.setPlaceholderText("5,000")
+        # background text
+        self.defaultBetText = QLabel("Default bet size")
+        """Text helper for default bet"""
+        self.defaultBetText.setToolTip("Bet to set automatically with the default button\n"
+                                    "If the balance rounding is enabled, rounds the balance to the nearest set value instead\n"
+                                    "Eg. 10,000 means a balance of 15,202 would round to a bet of 5,202 (leaving 10,000 as the balance)\n"
+                                    "A balance of 31,863 would round to a bet of 1,863 (leaving 30,000 as the balance)")
+        # tooltip
+        
+        self.roundBalanceBetCheckbox = QCheckBox("Round balance to bet")
+        """Checkbox to enable balance rounding"""
+        self.roundBalanceBetText = QLabel("Whether to round the balance to form bets")
+        """Text helper for balance rounding"""
+        self.roundBalanceBetText.setToolTip("Uses the default bet as a 'rounding guide' instead")
+        # tooltip
+
+        self.autoAddStreakText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.autoRemoveStreaksText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.enableCSVErrorsText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.defaultBetText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.roundBalanceBetText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        # centers all text fields to the top of their slots
+
+        self.configLayout.addWidget(self.autoAddStreaksCheckbox, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.autoRemoveStreaksCheckbox, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 6, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.defaultBetLine, 8, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.roundBalanceBetCheckbox, 10, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the selector fields to layout
+
+        self.configLayout.addWidget(self.autoAddStreakText, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.autoRemoveStreaksText, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.enableCSVErrorsText, 7, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.defaultBetText, 9, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.roundBalanceBetText, 11, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the text widgets to layout
+
+        self.configPageTopSpacer = QSpacerItem(50, 25)
+        # a spacer between the top text and the options
+        self.configPageBottomSpacer = QSpacerItem(50, 25)
+        # adds a layout spacer below the "save" button
+
+        self.configLayout.addItem(self.configPageTopSpacer, 1, 0)
+        self.configLayout.addItem(self.configPageBottomSpacer, 12, 0)
+        # adds the spacers to layout
+
+        self.configPrepSaveButton = QPushButton("Save")
+        # adds a button to save the config
+        self.configPrepSaveButton.setFixedSize(100, 50)
+        # sets size
+        self.configLayout.addWidget(self.configPrepSaveButton, 13, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to layout
+
+        self.configPrepSaveButton.clicked.connect(self.modifyConfigText)
+        # done -> modify config
+
+
+
+    ### Task Page ###
+
+        self.taskPage = QWidget()
+        # task widget
+        self.taskPage.setObjectName("Task Chooser Page")
+        # object name
+
+        self.taskLayout = QGridLayout(self.taskPage)
+        # creates a new layout for the tasks to use
+        self.taskLayout.setColumnMinimumWidth(0, 300)
+        # forces the column 0 to stay at 300px (no movement)
+        self.taskLayout.setVerticalSpacing(20)
+        # sets spacing between buttons
+
+        self.mainStack.addWidget(self.taskPage)
+        # adds the config layout to the center of the doc
+
+        self.pointGrabTask = QPushButton("Channel Points")
+        self.streakGrabTask = QPushButton("Channel Streaks")
+        self.singleGrabTask = QPushButton("Single Channel")
+        self.predictionTask = QPushButton("Prediction Screen")
+        self.skipToBrowser = QPushButton("Skip to browser view")
+        # adds the buttons to determine task
+
+        self.pointGrabTask.setToolTip("Tasks related to channel points")
+        self.streakGrabTask.setToolTip("Tasks related to view streaks")
+        self.singleGrabTask.setToolTip("Single channel's points and streak")
+        self.predictionTask.setToolTip("Opens the prediction view")
+        self.skipToBrowser.setToolTip("Bypass processing and enter the browser\nUse this to change the logged in Twitch account")
+        # tooltips
+
+        self.pointGrabTask.setMinimumSize(250, 40)
+        self.streakGrabTask.setMinimumSize(250, 40)
+        self.singleGrabTask.setMinimumSize(250, 40)
+        self.predictionTask.setMinimumSize(250, 40)
+        self.skipToBrowser.setMinimumSize(250, 40)
+        # sets the sizes of the buttons
+
+        self.optionsButtonTask = self.optionsButton
+        self.versionTagTask = self.versionTag
+        self.exitButtonTask = self.exitButton
+        # creates a clone of the options and exit buttons and the version tag
+
+        self.taskLayout.addWidget(self.pointGrabTask, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.streakGrabTask, 2, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.singleGrabTask, 3, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.predictionTask, 4, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.skipToBrowser, 5, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.versionTagTask, 7, 0, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.taskLayout.addWidget(self.exitButtonTask, 7, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.optionsButtonTask, 7, 2, alignment=Qt.AlignmentFlag.AlignRight)
+        # adds all the buttons to layout
+
+        self.taskLayoutTopSpacer = QSpacerItem(50, 50)
+        self.taskLayoutBotSpacer = QSpacerItem(50, 50)
+        # adds a top and bottom spacer
+
+        self.taskLayout.addItem(self.taskLayoutTopSpacer, 0, 1)
+        self.taskLayout.addItem(self.taskLayoutBotSpacer, 6, 1)
+        # adds the spacers to layout (above and below selections, to squish them a bit
+
+        self.pointGrabTask.clicked.connect(lambda: self.taskChooser("Channel Points", 1))
+        self.streakGrabTask.clicked.connect(lambda: self.taskChooser("Channel Streaks", 2))
+        self.singleGrabTask.clicked.connect(lambda: self.taskChooser("Single Channel", 3))
+        self.predictionTask.clicked.connect(lambda: self.taskChooser("Prediction", 4))
+        self.skipToBrowser.clicked.connect(lambda: self.taskChooser("Skip to Browser", 5))
+        # calls the task chooser to further check the task(s)
+
+        self.escShortcut = QShortcut(QKeySequence("Escape"), self)
+        # forms a keybind to Escape
+        self.escShortcut.activated.connect(lambda: self.mainStack.setCurrentWidget(self.taskPage))
+        # sets the task page as active when activated (can be used to go back from config or subtask views)
+
+
+
+    ### Subtask Page 1 (Points-Related) ###
+        
+        self.subtaskPage1 = QWidget()
+        # subtask page 1
+        self.subtaskPage1.setObjectName("Subtask Page 1")
+        # object name
+        self.mainStack.addWidget(self.subtaskPage1)
+        # adds to stack
+        self.subtaskPage1Layout = QGridLayout(self.subtaskPage1)
+        # layout for subtask 1
+
+        self.taskChooseTopSpacerST1 = QSpacerItem(250, 150)
+        # adds a spacer between the top and the first option     
+
+        self.allPointsButton = QPushButton("All Points")
+        # all points button
+        self.allPointsButton.setToolTip("Get all channel points for channels in the channel list file")
+        # tooltip
+        self.allPointsButton.setMinimumSize(250, 50)
+        # sets minimum size
+
+        self.taskPointsAndStreaksButtonST1 = QPushButton("All Points and Streaks")
+        # pre-creates a button for both streaks and points
+        self.taskPointsAndStreaksButtonST1.setToolTip("Get both channel points and streaks\nof the channels in the channel list file")
+        # tooltip
+        self.taskPointsAndStreaksButtonST1.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskPointsAndStreaksButtonST1.clicked.connect(lambda: self.taskRunner(1, 2, None))
+        # if the points + streaks button is pressed, calls taskRunner with task 1 subtask 2
+
+        self.taskChooseBackSpacerST1 = QSpacerItem(250, 100)
+        # adds a spacer beween the back button and the last option
+
+        self.taskChooseBackButtonST1 = QPushButton("Back")
+        # back button, in case points was not the intended selection
+        self.taskChooseBackButtonST1.setToolTip("Go back to selection menu\nEscape works, too")
+        # tooltip
+        self.taskChooseBackButtonST1.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskChooseBackButtonST1.clicked.connect(lambda: self.mainStack.setCurrentWidget(self.taskPage))
+        # sends back to task page
+
+        self.subtaskPage1Layout.addItem(self.taskChooseTopSpacerST1, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the top spacer
+        self.subtaskPage1Layout.addWidget(self.allPointsButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the all points button to layout
+        self.subtaskPage1Layout.addWidget(self.taskPointsAndStreaksButtonST1, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the streaks + points button
+        self.subtaskPage1Layout.addItem(self.taskChooseBackSpacerST1, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the spacer
+        self.subtaskPage1Layout.addWidget(self.taskChooseBackButtonST1, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the back button
+
+        self.allPointsButton.clicked.connect(lambda: self.taskRunner(1, 1, None))
+        # all points calls taskRunner with task 1 subtask 1
+
+
+
+    ### Subtask Page 2 (Streaks-Related) ###
+
+        self.subtaskPage2 = QWidget()
+        # subtask page 2
+        self.subtaskPage2.setObjectName("Subtask Page 2")
+        # object name
+        self.mainStack.addWidget(self.subtaskPage2)
+        # adds to stack
+        self.subtaskPage2Layout = QGridLayout(self.subtaskPage2)
+        # layout for subtask 2
+
+        self.taskChooseTopSpacerST2 = QSpacerItem(250, 150)
+        # adds a spacer between the top and the first option  
+
+        self.allStreaksButtonST2 = QPushButton("All Streaks")
+        # all streaks button
+        self.allStreaksButtonST2.setToolTip("Get all streaks for channels in the channel list file")
+        # tooltip
+        self.allStreaksButtonST2.setMinimumSize(250, 50)
+        # sets minimum size
+
+        self.activeStreaksButtonST2 = QPushButton("Active Streaks")
+        # all streaks button
+        self.activeStreaksButtonST2.setToolTip("Get streaks marked as active (>1) from the channel points file")
+        # tooltip
+        self.activeStreaksButtonST2.setMinimumSize(250, 50)
+        # sets minimum size
+
+        self.taskPointsAndStreaksButtonST2 = QPushButton("All Points and Streaks")
+        # pre-creates a button for both streaks and points
+        self.taskPointsAndStreaksButtonST2.setToolTip("Get both channel points and streaks\nof the channels in the channel list file")
+        # tooltip
+        self.taskPointsAndStreaksButtonST2.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskPointsAndStreaksButtonST2.clicked.connect(lambda: self.taskRunner(1, 2, None))
+        # if the points + streaks button is pressed, calls taskRunner with task 1 subtask 2
+
+        self.taskChooseBackSpacerST2 = QSpacerItem(250, 100)
+        # adds a spacer beween the back button and the last option
+
+        self.taskChooseBackButtonST2 = QPushButton("Back")
+        # back button, in case points was not the intended selection
+        self.taskChooseBackButtonST2.setToolTip("Go back to selection menu\nEscape works, too")
+        # tooltip
+        self.taskChooseBackButtonST2.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskChooseBackButtonST2.clicked.connect(lambda: self.mainStack.setCurrentWidget(self.taskPage))
+        # sends back to task page
+
+        self.subtaskPage2Layout.addItem(self.taskChooseTopSpacerST2, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the top spacer
+        self.subtaskPage2Layout.addWidget(self.allStreaksButtonST2, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the all streaks button to layout
+        self.subtaskPage2Layout.addWidget(self.activeStreaksButtonST2, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the active streaks button to layout
+        self.subtaskPage2Layout.addWidget(self.taskPointsAndStreaksButtonST2, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the streaks + points button
+        self.subtaskPage2Layout.addItem(self.taskChooseBackSpacerST2, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the spacer
+        self.subtaskPage2Layout.addWidget(self.taskChooseBackButtonST2, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the back button
+
+        self.allStreaksButtonST2.clicked.connect(lambda: self.taskRunner(2, 1, None))
+        # all streaks calls taskRunner with task 2 subtask 1
+        self.activeStreaksButtonST2.clicked.connect(lambda: self.taskRunner(2, 2, None))
+        # active streaks calls taskRunner with task 2 subtask 2
+
+
+
+    ### Subtask Page 3 (Single Channel Points/Streaks) ###
+
+        self.subtaskPage3 = QWidget()
+        # subtask page 3
+        self.subtaskPage3.setObjectName("Subtask Page 3")
+        # object name
+        self.mainStack.addWidget(self.subtaskPage3)
+        # adds to stack
+        self.subtaskPage3Layout = QGridLayout(self.subtaskPage3)
+        # layout for subtask 3
+
+        self.taskChooseTopSpacerST3 = QSpacerItem(250, 150)
+        # adds a spacer between the top and the first option  
+
+        self.taskSingleChannelNameST3 = QLineEdit()
+        # a user input field for the channel name
+        self.taskSingleChannelNameST3.setPlaceholderText("Channel name")
+        # adds a placeholder (background) text
+        self.taskSingleChannelNameST3.setToolTip("Write a channel to perform task on")
+        # tooltip
+        self.taskSingleChannelNameST3.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskSingleChannelNameST3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # aligns the text to center
+
+        self.taskSingleSubmitButtonST3 = QPushButton("Submit")
+        # submit button to enter channel
+        self.taskSingleSubmitButtonST3.setToolTip("Confirm selection")
+        # tooltip
+        self.taskSingleSubmitButtonST3.setMinimumSize(250, 50)
+        # sets minimum size
+
+        self.taskChooseBackSpacerST3 = QSpacerItem(250, 100)
+        # adds a spacer beween the back button and the last option
+
+        self.taskChooseBackButtonST3 = QPushButton("Back")
+        # back button, in case points was not the intended selection
+        self.taskChooseBackButtonST3.setToolTip("Go back to selection menu\nEscape works, too")
+        # tooltip
+        self.taskChooseBackButtonST3.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskChooseBackButtonST3.clicked.connect(lambda: self.mainStack.setCurrentWidget(self.taskPage))
+        # sends back to task page
+
+        self.subtaskPage3Layout.addItem(self.taskChooseTopSpacerST1, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the top spacer
+        self.subtaskPage3Layout.addWidget(self.taskSingleChannelNameST3, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the channel name input field
+        self.subtaskPage3Layout.addWidget(self.taskSingleSubmitButtonST3, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the submit channel button
+        self.subtaskPage3Layout.addItem(self.taskChooseBackSpacerST3, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the back button spacer
+        self.subtaskPage3Layout.addWidget(self.taskChooseBackButtonST3, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the back button
+
+        self.taskSingleSubmitButtonST3.clicked.connect(lambda: self.taskRunner(3, 0, self.taskSingleChannelNameST3.text().strip()))
+        # runs the task with command 3 and the channel name field's text
+        self.taskSingleChannelNameST3.returnPressed.connect(lambda: self.taskRunner(3, 0, self.taskSingleChannelNameST3.text().strip()))
+        # runs the task with command 3 and the channel name field's text
+
+
+
+    ### Subtask Page 4 (Predictions) ###
+
+        self.subtaskPage4 = QWidget()
+        # subtask page 4
+        self.subtaskPage4.setObjectName("Subtask Page 4")
+        # object name
+        self.mainStack.addWidget(self.subtaskPage4)
+        # adds to stack
+        self.subtaskPage4Layout = QGridLayout(self.subtaskPage4)
+        # layout for subtask 4
+
+        self.taskChooseTopSpacerST4 = QSpacerItem(250, 150)
+        # adds a spacer between the top and the first option  
+
+        self.taskSingleChannelNameST4 = QLineEdit()
+        # a user input field for the channel name
+        self.taskSingleChannelNameST4.setPlaceholderText("Channel name")
+        # adds a placeholder (background) text
+        self.taskSingleChannelNameST4.setToolTip("Write a channel to perform task on")
+        # tooltip
+        self.taskSingleChannelNameST4.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskSingleChannelNameST4.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # aligns the text to center
+
+        self.taskSingleSubmitButtonST4 = QPushButton("Submit")
+        # submit button to enter channel
+        self.taskSingleSubmitButtonST4.setToolTip("Confirm selection")
+        # tooltip
+        self.taskSingleSubmitButtonST4.setMinimumSize(250, 50)
+        # sets minimum size
+
+        self.taskChooseBackButtonST4 = QPushButton("Back")
+        # back button, in case points was not the intended selection
+        self.taskChooseBackButtonST4.setToolTip("Go back to selection menu\nEscape works, too")
+        # tooltip
+        self.taskChooseBackButtonST4.setMinimumSize(250, 50)
+        # sets minimum size
+        self.taskChooseBackButtonST4.clicked.connect(lambda: self.mainStack.setCurrentWidget(self.taskPage))
+        # sends back to task page
+
+        self.taskChooseBackSpacerST4 = QSpacerItem(250, 100)
+        # adds a spacer beween the back button and the last option
+
+        self.subtaskPage4Layout.addItem(self.taskChooseTopSpacerST4, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the top spacer
+        self.subtaskPage4Layout.addWidget(self.taskSingleChannelNameST4, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the channel name input field
+        self.subtaskPage4Layout.addWidget(self.taskSingleSubmitButtonST4, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the submit channel button
+        self.subtaskPage4Layout.addItem(self.taskChooseBackSpacerST4, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the spacer
+        self.subtaskPage4Layout.addWidget(self.taskChooseBackButtonST4, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the back button
+
+        self.taskSingleSubmitButtonST4.clicked.connect(lambda: self.taskRunner(4, 0, self.taskSingleChannelNameST4.text().strip()))
+        # runs the task with command 4 and the channel name field's text
+        self.taskSingleChannelNameST4.returnPressed.connect(lambda: self.taskRunner(4, 0, self.taskSingleChannelNameST4.text().strip()))
+        # runs the task with command 4 and the channel name field's text
+
+
+
+    ### Startup ###
+
+        self.mainStack.setCurrentWidget(self.mainPage)
+        # sets the main page as active page
         self.labelSwap.connect(self.changeLabel)
         # connects the label swap signal to the change label function
+        self.checkUpdate()
+        # runs the update check to see if there's a new version of TEPM
         self.firstTimeUI()
         # runs the first time UI checker to see if the first time UI should appear or not
 
@@ -305,10 +761,6 @@ class StarterWindow(QWidget):
                            f"TwitchRivals")
                 # writes just Twitch and Twitch Rivals as the only channels (shows how the list works, 100% functional channels)
 
-
-
-    ### User Profile Check ###
-
         self.subfolders = list(folders(profilePath))
         # stores the subfolders of the profile path (installation/Profile/)
 
@@ -334,22 +786,8 @@ class StarterWindow(QWidget):
 
         else:
         # if there's no profile subfolder yet
-            self.labelSwap.emit("No profile configured, please enter a new profile name:\nThis is purely cosmetic")
-            # swaps the label
-            self.userInputField.setPlaceholderText("Default")
-            # sets the default text
-            self.userInputField.show()
-            # unhides the text input element
-
-            self.usernameButton = QPushButton("Submit")
-            # makes a new button to save the name
-            self.usernameButton.setFixedSize(100, 50)
-            # sets size
-            self.mainLayout.addWidget(self.usernameButton, 2, 3, alignment=Qt.AlignmentFlag.AlignLeft)
-            # adds the button to layout (row 2, col 3)
-
-            self.usernameButton.clicked.connect(self.userNameGrab)
-            # on click, calls the next part
+            self.mainStack.setCurrentWidget(self.profilePickPage)
+            # sets active page to the profile picking page
 
 
 
@@ -359,8 +797,11 @@ class StarterWindow(QWidget):
         """Function to grab the user profile folder"""
         global profileName
         # global -> local (set if none exists)
+
+        self.mainStack.setCurrentWidget(self.mainPage)
+        # sets main page as active page
             
-        self.chooseUsername = self.userInputField.text().strip()
+        self.chooseUsername = self.profileNameField.text().strip()
         # stores the username from the input field
         
         if self.chooseUsername == "":
@@ -379,15 +820,6 @@ class StarterWindow(QWidget):
             # stores the profile name as the chosen name
             waitTimer = 1200
             # sets the wait timer to 1200 ms, shorter text with no instructions
-
-        self.usernameButton.deleteLater()
-        # deletes the username button
-        self.mainLayout.removeWidget(self.usernameButton)
-        # removes the button from the layout
-        self.userInputField.hide()
-        # hides the input field
-        self.userInputField.setText("")
-        # empties the text
 
         QTimer.singleShot(waitTimer, self.hashLoader)
         # waits a time, then calls intermediary function
@@ -412,35 +844,28 @@ class StarterWindow(QWidget):
                 # opens the hash file path
                     hashMap = json.load(hsh)
                     # loads the hashmap
-                    self.configWindow()
-                    # calls the config window to proceed
             except:
             # if it can't load it properly
                 self.labelSwap.emit("Could not open the hash file, please ensure it's valid.\nTry downloading a new one from GitHub")
                 # user inform
-                QTimer.singleShot(2500, self.goToMainWindow)
-                # calls the stop function after a couple seconds
+                return
         else:
         # if the hash file doesn't exist
             self.labelSwap.emit("No hashes.json file found, please download a new one from GitHub.")
             # user inform
-            QTimer.singleShot(2500, self.goToMainWindow)
-            # calls the stop function after a couple seconds
+            return
+
+        self.configWindow()
+        # calls the config window to proceed
 
 
 
 ### Configuration Window ###
 
     def configWindow(self):
-        """Function to show the configuration window"""
+        """Function to load the configuration window"""
         global streakMap, enableErrorLog, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
         # global -> local
-
-        self.configLayout = QGridLayout()
-        # creates a layout just for the config file
-
-        self.mainLayout.addLayout(self.configLayout, 2, 1, 2, 3)
-        # adds the config layout to the center of the doc (spans from 2x1 to 3x3)
 
         self.labelSwap.emit("Reading config...")
         # user inform
@@ -463,126 +888,23 @@ class StarterWindow(QWidget):
                 roundBalanceBet = streakMap.get("roundBalanceBet", False)
                 # gets the boolean for balance rounding for bets
 
-                self.taskChooserConfig()
-                # calls the next stage
+                self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
+                self.autoRemoveStreaksCheckbox.setChecked(autoRemoveStreaks)
+                self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
+                self.defaultBetLine.setText(f"{defaultBet}")
+                self.roundBalanceBetCheckbox.setChecked(roundBalanceBet)
+                # sets the check status based on the stored values
         else:
         # if the file doesn't exist
-            self.prepConfig()
-            # calls the modifyConfig to set options
+            self.mainStack.setCurrentWidget(self.configPage)
+            # sets the config page visible (since config is required)
+            return
+            # doesn't progress
 
-
-
-### Configuration Selection ###
-
-    def prepConfig(self):
-        """Function to prepare for the configuration modification"""
-
-        self.labelSwap.emit("Configure TEPM\nHover over any text field to see more details")
-        # changes the main label
-
-        self.defaultBetMask = QIntValidator(0, 250000)
-        """A validator for the default bet"""
-        
-        self.autoAddStreaksCheckbox = QCheckBox("Auto-add streaks")
-        """Checkbox for automatically adding streaks"""
-        self.autoAddStreakText = QLabel("Automatically add active streaks to list")
-        """Text helper for streak addition"""
-        self.autoAddStreakText.setToolTip("When checking points and streaks, adds active streaks to the streak list file\n"
-                                        "Active streak = longer than 1")
-        # tooltip
-
-        self.autoRemoveStreaksCheckbox = QCheckBox("Auto-remove streaks")
-        """Checkbox for automatically removing inactive streaks"""
-        self.autoRemoveStreaksText = QLabel("Automatically remove stale streaks")
-        """Text helper for streak removal"""
-        self.autoRemoveStreaksText.setToolTip("Removes streaks that have been broken (0 streak)")
-        # tooltip
-
-        self.enableCSVErrorsCheckbox = QCheckBox("Store errors")
-        """Checkbox for enabling errors in CSV"""
-        self.enableCSVErrorsText = QLabel("Whether to add any point grab errors into CSV")
-        """Text helper for CSV errors"""
-        self.enableCSVErrorsText.setToolTip("Save any error reasons into the CSV with point/streak data\n"
-                                            "Error booleans are saved regardless of this option")
-        # tooltip
-
-        self.defaultBetLine = QLineEdit()
-        """Line to edit the default bet value"""
-        self.defaultBetLine.setValidator(self.defaultBetMask)
-        # sets a validator to only accept digits with a max bet of 250000
-        self.defaultBetLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # centers the text
-        self.defaultBetLine.setPlaceholderText("5,000")
-        # background text
-        self.defaultBetText = QLabel("Default bet")
-        """Text helper for default bet"""
-        self.defaultBetText.setToolTip("Bet to set automatically with the default button\n"
-                                    "If the balance rounding is enabled, rounds the balance to the nearest set value instead\n"
-                                    "Eg. 10,000 means a balance of 15,202 would round to a bet of 5,202 (leaving 10,000 as the balance)\n"
-                                    "A balance of 31,863 would round to a bet of 1,863 (leaving 30,000 as the balance)")
-        # tooltip
-        
-        self.roundBalanceBetCheckbox = QCheckBox("Round balance to bet")
-        """Checkbox to enable balance rounding"""
-        self.roundBalanceBetText = QLabel("Whether to round the balance to form bets")
-        """Text helper for balance rounding"""
-        self.roundBalanceBetText.setToolTip("Uses the default bet as a 'rounding guide' instead")
-        # tooltip
-
-        self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
-        self.autoRemoveStreaksCheckbox.setChecked(autoRemoveStreaks)
-        self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
-        self.defaultBetLine.setText(f"{defaultBet}")
-        self.roundBalanceBetCheckbox.setChecked(roundBalanceBet)
-        # sets the check status based on the stored values
-
-        self.autoAddStreakText.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-        )
-        self.autoRemoveStreaksText.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-        )
-        self.enableCSVErrorsText.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-        )
-        self.defaultBetText.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-        )
-        self.roundBalanceBetText.setAlignment(
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter
-        )
-        # centers all text fields to the top of their slots
-
-        self.configLayout.addWidget(self.autoAddStreaksCheckbox, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.autoRemoveStreaksCheckbox, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.defaultBetLine, 7, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.roundBalanceBetCheckbox, 9, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the selector fields to layout
-
-        self.configLayout.addWidget(self.autoAddStreakText, 2, 0)
-        self.configLayout.addWidget(self.autoRemoveStreaksText, 4, 0)
-        self.configLayout.addWidget(self.enableCSVErrorsText, 6, 0)
-        self.configLayout.addWidget(self.defaultBetText, 8, 0)
-        self.configLayout.addWidget(self.roundBalanceBetText, 10, 0)
-        # adds the text widgets to layout
-
-        self.saveButtonTopSpacer = QSpacerItem(50, 20)
-        self.saveButtonBottomSpacer = QSpacerItem(50, 20)
-        # adds a layout spacer both above and below the "save" button
-        #self.mainLayout.addItem(self.saveButtonTopSpacer, 4, 2)
-        self.mainLayout.addItem(self.saveButtonBottomSpacer, 6, 2)
-        # adds the spacer to layout
-
-        self.configPrepSaveButton = QPushButton("Save")
-        # adds a button to save the config
-        self.configPrepSaveButton.setFixedSize(100, 50)
-        # sets size
-        self.mainLayout.addWidget(self.configPrepSaveButton, 5, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to layout
-
-        self.configPrepSaveButton.clicked.connect(self.modifyConfigText)
-        # done -> modify config
+        self.mainStack.setCurrentWidget(self.taskPage)
+        # sets the task page visible
+        self.optionsButton.setEnabled(True)
+        # enables the options button
 
 
 
@@ -591,37 +913,21 @@ class StarterWindow(QWidget):
     def modifyConfigText(self):
         """Function to just set the text with a delay"""
 
-        self.autoAddStreaksCheckbox.hide()
-        self.autoRemoveStreaksCheckbox.hide()
-        self.enableCSVErrorsCheckbox.hide()
-        self.defaultBetLine.hide()
-        self.roundBalanceBetCheckbox.hide()
-        # hides the entry fields
-        self.autoAddStreakText.deleteLater()
-        self.autoRemoveStreaksText.deleteLater()
-        self.enableCSVErrorsText.deleteLater()
-        self.defaultBetText.deleteLater()
-        self.roundBalanceBetText.deleteLater()
-        # deletes the texts
-        self.configPrepSaveButton.deleteLater()
-        # deletes the save button
-
-        self.mainLayout.removeItem(self.saveButtonTopSpacer)
-        self.mainLayout.removeItem(self.saveButtonBottomSpacer)
-        # removes the spacers
+        self.mainStack.setCurrentWidget(self.mainPage)
+        # sets main page back to active
 
         self.labelSwap.emit("Modifying configuration...")
         # sets new text
 
         if self.optionReturn:
         # if user returns from options screen
-            QTimer.singleShot(300, self.modifyConfig)
+            QTimer.singleShot(200, self.modifyConfig)
             # calls modifyConfig faster
         else:
         # if it's the first time
             self.optionReturn = True
             # sets the boolean to True so it gets caught
-            QTimer.singleShot(750, self.modifyConfig)
+            QTimer.singleShot(800, self.modifyConfig)
             # calls modifyConfig slightly later
     
     def modifyConfig(self):
@@ -644,112 +950,21 @@ class StarterWindow(QWidget):
         roundBalanceBet = self.roundBalanceBetCheckbox.isChecked()
         # sets the global variables based on the entry values
 
-        self.autoAddStreaksCheckbox.deleteLater()
-        self.autoRemoveStreaksCheckbox.deleteLater()
-        self.enableCSVErrorsCheckbox.deleteLater()
-        self.defaultBetLine.deleteLater()
-        self.roundBalanceBetCheckbox.deleteLater()
-        # deletes the entry fields after they've been checked
-
         with open(streakMapPath, "w") as strk:
         # opens the streak config location (or makes a new file)
             json.dump(streakMap, strk, indent=3)
             # dumps the map into file
 
-        self.labelSwap.emit("Configuration modified...")
+        self.labelSwap.emit("Configuration modified")
         # changes label
         
         if self.optionReturn:
         # if the boolean is true
-            self.taskChooserConfig()
-            # calls the task chooser immediately
+            self.mainStack.setCurrentWidget(self.taskPage)
+            # sets visible
         else:
-            QTimer.singleShot(2000, self.taskChooserConfig)
-            # runs the task chooser config
-
-
-
-### Task Selection ###
-
-    def taskChooserConfig(self):
-        """Function to select which tasks the program should perform"""
-
-        self.labelSwap.emit("Please select a task to perform:")
-        # swaps main label
-
-        self.taskLayout = QGridLayout()
-        # creates a new layout for the tasks to use
-        self.taskLayout.setColumnMinimumWidth(0, 300)
-        # forces the column 0 to stay at 300px (no movement)
-        self.taskLayout.setVerticalSpacing(25)
-        # sets spacing between buttons
-
-        self.mainLayout.addLayout(self.taskLayout, 2, 1, 2, 3)
-        # adds the config layout to the center of the doc (spans from 2x1 to 3x3)
-
-        self.pointGrabTask = QPushButton("Channel Points")
-        self.streakGrabTask = QPushButton("Channel Streaks")
-        self.singleGrabTask = QPushButton("Single Channel")
-        self.predictionTask = QPushButton("Prediction Screen")
-        self.skipToBrowser = QPushButton("Skip to browser view")
-        # adds the buttons to determine task
-
-        self.pointGrabTask.setToolTip("Tasks related to channel points")
-        self.streakGrabTask.setToolTip("Tasks related to view streaks")
-        self.singleGrabTask.setToolTip("Single channel's points and streak")
-        self.predictionTask.setToolTip("Opens the prediction view")
-        self.skipToBrowser.setToolTip("Bypass processing and enter the browser\nUse this to change the logged in Twitch account")
-        # tooltips
-
-        self.pointGrabTask.setMinimumSize(250, 40)
-        self.streakGrabTask.setMinimumSize(250, 40)
-        self.singleGrabTask.setMinimumSize(250, 40)
-        self.predictionTask.setMinimumSize(250, 40)
-        self.skipToBrowser.setMinimumSize(250, 40)
-        # sets the sizes of the buttons
-
-        self.taskLayout.addWidget(self.pointGrabTask, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.streakGrabTask, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.singleGrabTask, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.predictionTask, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.taskLayout.addWidget(self.skipToBrowser, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds all the buttons to layout
-
-        self.optionsButton = QPushButton("Options")
-        # adds options button
-        self.optionsButton.setToolTip("Open the options/config view")
-        # tooltip
-        self.optionsButton.setMaximumSize(75, 40)
-        # sets size
-        self.optionsButton.clicked.connect(self.options)
-        # connects the options button to the options function
-
-        self.mainLayout.addWidget(self.optionsButton, 7, 4, alignment=Qt.AlignmentFlag.AlignRight)
-        # adds the button to the right bottom corner
-
-        try:
-        # tries to add the spacers (may already exist)
-            self.taskLayoutTopSpacer = QSpacerItem(50, 50)
-            self.taskLayoutBotSpacer = QSpacerItem(50, 100)
-            # adds a top and bottom spacer
-        except:
-        # if it can't (they likely already exist)
-            None
-            # does nothing
-
-        self.taskLayout.addItem(self.taskLayoutTopSpacer, 0, 0)
-        self.taskLayout.addItem(self.taskLayoutBotSpacer, 6, 0)
-        # adds the spacers to layout (above and below selections, to squish them a bit
-
-        self.pointGrabTask.clicked.connect(lambda: self.taskChooser("Channel Points", 1))
-        self.streakGrabTask.clicked.connect(lambda: self.taskChooser("Channel Streaks", 2))
-        self.singleGrabTask.clicked.connect(lambda: self.taskChooser("Single Channel", 3))
-        self.predictionTask.clicked.connect(lambda: self.taskChooser("Prediction", 4))
-        self.skipToBrowser.clicked.connect(lambda: self.taskChooser("Skip to Browser", 5))
-        # calls the task chooser to further check the task(s)
-
-        self.checkUpdate()
-        # runs the update check to see if there's a new version of TEPM
+            QTimer.singleShot(1500, lambda: self.mainStack.setCurrentWidget(self.taskPage))
+            # runs the task chooser config slower (user can see prompt)
 
 
 
@@ -793,7 +1008,6 @@ class StarterWindow(QWidget):
                 else:
                     self.versionTag.setText(f"TEPM v{self.version}\nLatest")
                     # updates text
-            
             else:
                 self.versionTag.setText(f"TEPM v{self.version}\nUpdate check failed")
                 # not status 200 (error)
@@ -803,195 +1017,35 @@ class StarterWindow(QWidget):
 
 
 
-### Options Screen ###
-
-    def options(self):
-        """Function that enters the options screen"""
-
-        try:
-        # tries to delete previous elements
-            self.optionsButton.deleteLater()
-            self.pointGrabTask.deleteLater()
-            self.streakGrabTask.deleteLater()
-            self.singleGrabTask.deleteLater()
-            self.predictionTask.deleteLater()
-            self.skipToBrowser.deleteLater()
-            # removes/deletes the previous elements
-        except:
-        # if the deletion fails (shouldn't, but better than crashing)
-            None
-            # does nothing
-
-        self.prepConfig()
-        # calls prepConfig to open that screen
-
-
-
 ### Subtask Selection -> Task Run ###
 
     def taskChooser(self, task: str, taskNum: int):
         """Function to set the tasks to run based on chosen task(s)"""
 
-        try:
-        # tries to delete previous elements
-            self.optionsButton.deleteLater()
-            self.pointGrabTask.deleteLater()
-            self.streakGrabTask.deleteLater()
-            self.singleGrabTask.deleteLater()
-            self.predictionTask.deleteLater()
-            self.skipToBrowser.deleteLater()
-            # removes/deletes the previous elements
-        except:
-        # if the deletion fails (shouldn't, but better than crashing)
-            None
-            # does nothing
-
-        self.labelSwap.emit(f"Selected {task}...")
-        # user inform (may be pretty quick flash)
-
-        self.taskChooseBackButton = QPushButton("Back")
-        # back button, in case points was not the intended selection
-        self.taskChooseBackButton.setToolTip("Go back to selection menu")
-        # tooltip
-        self.taskChooseBackButton.setMinimumSize(250, 40)
-        # sets minimum size
-        self.taskChooseBackButton.clicked.connect(self.returnToConfigChooser)
-        # calls the chooser config caller with 1 step (goes back to task selection)
-
-        self.taskPointsAndStreaksButton = QPushButton("All Points and Streaks")
-        # pre-creates a button for both streaks and points
-        self.taskPointsAndStreaksButton.setToolTip("Get both channel points and streaks\nof the channels in the channel list file")
-        # tooltip
-        self.taskPointsAndStreaksButton.setMinimumSize(250, 40)
-        # sets minimum size
-        self.taskPointsAndStreaksButton.clicked.connect(lambda: self.taskRunner(1, 2, None))
-        # if the points + streaks button is pressed, calls taskRunner with task 1 subtask 2
-
-        self.taskChooseBackSpacer = QSpacerItem(250, 40)
-        # adds a spacer that can be placed between the other buttons and "back"
-
-        self.subtaskLayout = QGridLayout()
-        # creates a new layout for the buttons
-        self.taskLayout.addLayout(self.subtaskLayout, 2, 0)
-        # adds the layout under the top spacer and text field, center (only) column
-
-        self.taskSingleChannelName = QLineEdit()
-        # a user input field for the channel name
-        self.taskSingleChannelName.setPlaceholderText("Channel name")
-        # adds a placeholder (background) text
-        self.taskSingleChannelName.setToolTip("Write a channel to perform task on")
-        # tooltip
-        self.taskSingleChannelName.setMinimumSize(250, 40)
-        # sets minimum size
-        self.taskSingleChannelName.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # aligns the text to center
-
-        self.taskSingleSubmitButton = QPushButton("Submit")
-        # submit button to enter channel
-        self.taskSingleSubmitButton.setToolTip("Confirm selection")
-        # tooltip
-        self.taskSingleSubmitButton.setMinimumSize(250, 40)
-        # sets minimum size
-
         if taskNum == 1:
         # task 1 is channel points
-            self.labelSwap.emit(f"Select a {task} subtask:")
-            # swap label
-            
-            self.allPointsButton = QPushButton("All Points")
-            # all points button
-            self.allPointsButton.setToolTip("Get all channel points for channels in the channel list file")
-            # tooltip
-            self.allPointsButton.setMinimumSize(250, 40)
-            # sets minimum size
-
-            self.subtaskLayout.addWidget(self.allPointsButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the all points button to layout
-            self.subtaskLayout.addWidget(self.taskPointsAndStreaksButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the streaks + points button
-            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the spacer
-            self.subtaskLayout.addWidget(self.taskChooseBackButton, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the back button
-
-            self.allPointsButton.clicked.connect(lambda: self.taskRunner(1, 1, None))
-            # all points calls taskRunner with task 1 subtask 1
+            self.mainStack.setCurrentWidget(self.subtaskPage1)
+            # sets subtask page 1 as active page
 
         elif taskNum == 2:
         # task 2 is streaks
-            self.labelSwap.emit(f"Select a {task} subtask:")
-            # swap label
-
-            self.allStreaksButton = QPushButton("All Streaks")
-            # all streaks button
-            self.allStreaksButton.setToolTip("Get all streaks for channels in the channel list file")
-            # tooltip
-            self.allStreaksButton.setMinimumSize(250, 40)
-            # sets minimum size
-
-            self.activeStreaksButton = QPushButton("Active Streaks")
-            # all streaks button
-            self.activeStreaksButton.setToolTip("Get streaks marked as active (>1) from the channel points file")
-            # tooltip
-            self.activeStreaksButton.setMinimumSize(250, 40)
-            # sets minimum size
-
-            self.subtaskLayout.addWidget(self.allStreaksButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the all streaks button to layout
-            self.subtaskLayout.addWidget(self.activeStreaksButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the active streaks button to layout
-            self.subtaskLayout.addWidget(self.taskPointsAndStreaksButton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the streaks + points button
-            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the spacer
-            self.subtaskLayout.addWidget(self.taskChooseBackButton, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the back button
-
-            self.allStreaksButton.clicked.connect(lambda: self.taskRunner(2, 1, None))
-            # all streaks calls taskRunner with task 2 subtask 1
-            self.activeStreaksButton.clicked.connect(lambda: self.taskRunner(2, 2, None))
-            # active streaks calls taskRunner with task 2 subtask 2
+            self.mainStack.setCurrentWidget(self.subtaskPage2)
+            # sets subtask page 2 as active page
 
         elif taskNum == 3:
         # task 3 is single channel
-            self.labelSwap.emit("Please enter a channel:")
-            # swap label
-
-            self.subtaskLayout.addWidget(self.taskSingleChannelName, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the channel name input field
-            self.subtaskLayout.addWidget(self.taskSingleSubmitButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the submit channel button
-            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the back button spacer
-            self.subtaskLayout.addWidget(self.taskChooseBackButton, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the back button
-
-            self.taskSingleSubmitButton.clicked.connect(lambda: self.taskRunner(3, 0, self.taskSingleChannelName.text().strip()))
-            # runs the task with command 3 and the channel name field's text
-            self.taskSingleChannelName.returnPressed.connect(lambda: self.taskRunner(3, 0, self.taskSingleChannelName.text().strip()))
-            # runs the task with command 3 and the channel name field's text
+            self.mainStack.setCurrentWidget(self.subtaskPage3)
+            # sets subtask page 3 as active page
 
         elif taskNum == 4:
         # if it's 4 (prediction manager)
-            self.labelSwap.emit("Please enter a channel:")
-            # user inform
-
-            self.subtaskLayout.addWidget(self.taskSingleChannelName, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the channel name input field
-            self.subtaskLayout.addWidget(self.taskSingleSubmitButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the submit channel button
-            self.subtaskLayout.addItem(self.taskChooseBackSpacer, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the spacer
-            self.subtaskLayout.addWidget(self.taskChooseBackButton, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-            # adds the back button
-
-            self.taskSingleSubmitButton.clicked.connect(lambda: self.taskRunner(4, 0, self.taskSingleChannelName.text().strip()))
-            # runs the task with command 4 and the channel name field's text
-            self.taskSingleChannelName.returnPressed.connect(lambda: self.taskRunner(4, 0, self.taskSingleChannelName.text().strip()))
-            # runs the task with command 4 and the channel name field's text
+            self.mainStack.setCurrentWidget(self.subtaskPage4)
+            # sets subtask page 4 as active page
 
         elif taskNum == 5:
         # if it's 5 (skips to browser for login management)
+            self.mainStack.setCurrentWidget(self.mainPage)
+            # sets main page as active page
             self.labelSwap.emit("Opening browser view...")
             # user inform
             QTimer.singleShot(1500, lambda: self.taskRunner(5))
@@ -999,76 +1053,18 @@ class StarterWindow(QWidget):
 
 
 
-### Back to Config Chooser ###
-
-    def returnToConfigChooser(self):
-        """Function to return back to the config selection screen"""
-        try:
-        # tries (may "fail")
-            while self.subtaskLayout.count():
-            # while there's items in the subtask layout
-                item = self.subtaskLayout.takeAt(0)
-                # grabs the item at position 0
-                try:
-                # tries to take the widget info (can't if it's an item like spacer)
-                    widget = item.widget()
-                    # grabs the widget from the item
-                    if widget:
-                    # if there's a widget set
-                        widget.deleteLater()
-                        # deletes the widget
-                except:
-                # if it can't (probably a spacer)
-                    self.subtaskLayout.removeItem(item)
-                    # removes it instead
-            self.subtaskLayout.deleteLater()
-            # finally, deletes the whole layout
-        except:
-        # fail usually just means an item was deleted unexpectedly (which is fine)
-            None
-            # does nothing
-        
-        self.taskChooserConfig()
-        # calls the task chooser config after
-
-
-
 ### Task Run ###    
 
     def taskRunner(self, task:int=None, subtask:int=None, channel:str=None):
         """Function to run the selected task"""
-        global overrideChannel, canRun, activeOnly, enableStreaks, enablePoints, predictChannel, browserOnly
+        global overrideChannel, canRun, activeOnly, enableStreaks, enablePoints, predictChannel
         # global -> local
 
-
+        self.mainStack.setCurrentWidget(self.mainPage)
+        # sets main page as active page
+        
         self.configLoaded.emit()
         # sends signal to inform controller the config is done
-
-        try:
-        # tries (may "fail")
-            while self.subtaskLayout.count():
-            # while there's items in the subtask layout
-                item = self.subtaskLayout.takeAt(0)
-                # grabs the item at position 0
-                try:
-                # tries to take the widget info (can't if it's an item like spacer)
-                    widget = item.widget()
-                    # grabs the widget from the item
-                    if widget:
-                    # if there's a widget set
-                        widget.deleteLater()
-                        # deletes the widget
-                except:
-                # if it can't (probably a spacer)
-                    self.subtaskLayout.removeItem(item)
-                    # removes it instead
-            self.subtaskLayout.deleteLater()
-            # finally, deletes the whole layout
-        except:
-        # fail usually just means an item was deleted unexpectedly (which is fine)
-            None
-            # does nothing
-
         bonusString = ""
         # empty string
         
@@ -1097,7 +1093,7 @@ class StarterWindow(QWidget):
                 enableStreaks = True
                 activeOnly = True
                 # sets the streak-related booleans to True
-            signalStr = "Points"
+            signalStr = "Streaks"
             # sets the signal string to use
 
         elif task == 3:
@@ -1110,6 +1106,8 @@ class StarterWindow(QWidget):
                 # user inform
                 QTimer.singleShot(1250, lambda: self.taskChooser("Single Channel", 3))
                 # re-runs the same window command
+                return
+                # doesn't proceed
             signalStr = "Single"
             # sets the signal string to use
 
@@ -1128,8 +1126,6 @@ class StarterWindow(QWidget):
 
         elif task == 5:
         # task 5 is browser view
-            browserOnly = True
-            # sets the global boolean to True (tells the later functions to not run logic)
             signalStr = "Browser"
             # sets the signal string to use
 
@@ -1144,10 +1140,6 @@ class StarterWindow(QWidget):
         # if the task isn't to predict
             predictChannel = None
             # resets predictChannel
-        if not task == 5:
-        # if the task isn't to skip to browser
-            browserOnly = False
-            # sets the boolean (back) to False
 
         if canRun:
         # if the canRun is already set to True (returning from main)
@@ -1176,9 +1168,9 @@ class StarterWindow(QWidget):
     def returner(self):
         """Function to call to send back to the start of the start window"""
         self.labelSwap.emit("Reloading start menu...")
-        # user infor
-        self.returnToConfigChooser()
-        # returns to config chooser (goes through this to ensure all elements are gone)
+        # user inform
+        self.mainStack.setCurrentWidget(self.taskPage)
+        # sets main page as active page 
 
 
 
@@ -1193,8 +1185,6 @@ class tepmWindow(QWidget):
     """A pyQt signal to confirm the authentication token has been validated successfully and to pass the action"""
     taskText = pyqtSignal(str)
     """A pyQt signal to set the task string"""
-    browserShow = pyqtSignal(bool)
-    """A pyQt signal to check if the browser window should be shown, or a smaller preloader"""
     balanceOverride = pyqtSignal(int)
     """A pyQt signal to temporarily override the balance (bet success)"""
 
@@ -1233,6 +1223,8 @@ class tepmWindow(QWidget):
 
         self.browserView = QWebEngineView(self)
         # adds a new webengine view
+        self.authInvalidAction = None
+        # action the user was attempting to do before auth token failed
 
         self.predictChannelPoints = 0
         """Variable to store the predict channel's point balance"""
@@ -1260,8 +1252,6 @@ class tepmWindow(QWidget):
         self.betValidator = QIntValidator(0, 250000)
         """Validator to use with the bet line to ensure it fits Twitch's rules"""
 
-
-
     ### Basic Window Setup ###
 
         self.setWindowTitle(self.programName)
@@ -1271,48 +1261,67 @@ class tepmWindow(QWidget):
         self.setMinimumSize(500, 300)
         # the window size
 
-
-
     ### Main Window Layout ###
 
+        self.mainStack = QStackedWidget()
+        """A stacked widget to show/hide individual pages"""
+
         self.mainLayout = QGridLayout()
-        # creates a layout
+        """Main layout that hosts every sublayout"""
+        self.mainLayout.addWidget(self.mainStack)
+        # adds the stack to the main layout
+
         self.mainLayout.setSpacing(25)
         # sets spacing between elements (vertical and horizontal)
-        self.setLayout(self.mainLayout)
-        # sets the layout
         self.mainLayout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers everything to middle
         self.mainLayout.setContentsMargins(25, 25, 25, 25)
         # sets margins 
 
+        self.setLayout(self.mainLayout)
+        # sets the layout
 
+    ### Task-Only Page ###
 
-    ### Task View Grid ###
+        self.taskPage = QWidget()
+        """Task-only page widget"""
+        self.taskPage.setObjectName("Task Page")
+        # object name
+        self.mainStack.addWidget(self.taskPage)
+        # adds the page to the stack
 
-        self.taskGrid = QGridLayout()
-        # a layout for the tasks to fit into (browser / points)
-        self.mainLayout.addLayout(self.taskGrid, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the grid to the top middle
-
-
+        self.taskLayout = QGridLayout()
+        """Layout for task-view only"""
 
     ### Tooltip / Task View ###
 
-        self.taskView = QLabel()
-        # creates a line edit text field for the task progress
-        self.taskView.setText("Loading browser...")
-        # initial value
-        self.taskView.setToolTip("Current operation")
+        self.taskPageText = QLabel()
+        # a QLabel for the task progress
+        self.taskPageText.setText("Loading...")
+        # initial text
+        self.taskPageText.setToolTip("Current operation")
         # tooltip
-        self.taskView.setFixedSize(350, 40)
-        # sets a fixed size to prevent being cut off
-        self.taskView.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.taskPageText.setMinimumSize(350, 40)
+        # sets a size to prevent being cut off
+        self.taskPageText.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns to the center
-        self.taskGrid.addWidget(self.taskView, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.taskLayout.addWidget(self.taskPageText, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to layout
 
+        self.mainStack.setCurrentWidget(self.taskPage)
+        # sets task page as the default active page on launch
 
+    ### Browser Page ###
+
+        self.browserStackPage = QWidget()
+        """Browser page widget"""
+        self.browserStackPage.setObjectName("Browser Layout")
+        # object name
+        self.mainStack.addWidget(self.browserStackPage)
+        # adds the page to the stack
+
+        self.browserLayout = QGridLayout(self.browserStackPage)
+        """Layout to store browser elements"""
 
     ### Retry Token Button ###
 
@@ -1322,57 +1331,54 @@ class tepmWindow(QWidget):
         # sets a size
         self.refreshTokenButton.setToolTip("Press to attempt token re-validation")
         # tooltip
-        self.taskGrid.addWidget(self.refreshTokenButton, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.refreshTokenButton.clicked.connect(lambda: self.authValidCheck(self.authInvalidAction))
+        # calls the auth valid function when pressing the refresh button (passes the action user was trying to do before)
+
+        self.browserLayout.addWidget(self.refreshTokenButton, 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
         # adds it to the right side of the taskView
-        self.refreshTokenButton.hide()
-        # hides it by default
-
-
 
     ### Browser ###
 
-        self.browserPage = QWebEnginePage(passedProfile, self.browserView)
-        # forms a browser page from the passed profile and the browser view widget
-
+        self.browserPage = SilentWebPage(passedProfile, self.browserView)
+        # forms a browser page from the passed profile and the browser view widget (uses the console silencer to stop useless error spam)
         self.browserView.setPage(self.browserPage)
         # sets the page to use the given properties
-        self.browserView.setMinimumSize(780, 450)
-        # caps the browser size
-        self.browserView.hide()
-        # hides by default
 
-        self.mainLayout.addWidget(self.browserView, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the browser to the layout
+        self.browserView.setMinimumSize(1150, 700)
+        # sets minimum size
+
+        self.browserLayout.addWidget(self.browserView, 1, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the browser to the grid layout
         self.browserView.setUrl(QUrl(self.defaultURL))
         # sets "default" url to open (twitch.tv)     
+
+    ### Connections ###
 
         ctrl.starterWindowDone.connect(self.cssStyleLoader)
         # calls the auth grab when the page is done loading
         self.authValid.connect(self.uiStyle)
         # calls the ui function when auth token is checked
-        self.refreshTokenButton.clicked.connect(self.authValidCheck)
-        # calls the auth valid function when pressing the refresh button
-
-        self.browserShow.connect(self.browserWindow)
-        # calls browserWindow when the status is determined
- 
-        self.taskText.connect(self.manageTooltip)
-        # calls manageTooltip when the task text changes
+        self.taskText.connect(self.taskLabelChanger)
+        # calls the task label changer when the task text changes
         ctrl.taskChange.connect(self.taskLabelChanger)
-        # connects the controller signal to the task view changer function
+        # connects the controller signal to the task view changer function (lets super controller set the text)
         self.balanceOverride.connect(lambda bal: self.predictPointLabel.setText(f"Balance: {bal:,.0f} points"))
-        # connects the balance override to the balance label to temporarily override it before an update
+        # connects the balance override to the balance label to temporarily override it before an update (QoL)
 
 
 
     ### Point/Streak Grab UI ###
 
-        self.pointGrabLayout = QGridLayout()
+        self.pointGrabPage = QWidget()
+        """Point/streak grabbing page"""
+        self.pointGrabPage.setObjectName("Point Grab Page")
+        # object name
+        self.mainStack.addWidget(self.pointGrabPage)
+        # adds the page to the stack
+
+        self.pointGrabLayout = QGridLayout(self.pointGrabPage)
         """A layout that contains the point/streak grab elements"""
-        self.mainLayout.addLayout(self.pointGrabLayout, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to main layout
-        self.pointGrabLayout.setSpacing(30)
-        # sets spacing
 
         self.progressBar = QProgressBar()
         """A progress bar for the point/streak grab progress"""
@@ -1395,49 +1401,41 @@ class tepmWindow(QWidget):
         # customises the progress bar
         self.progressBar.setTextVisible(False)
         # disables the progress bar percentage (using index label)
-        self.progressBar.setFixedSize(QSize(300, 25))
-        # sets the progress bar's size, so that the spacers don't do weird stuff
+        self.progressBar.setMinimumSize(300, 25)
+        # sets the progress bar's size
         self.progressBar.setToolTip("Current progress")
         # tooltip
         self.progressBar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns to center
-        self.progressBar.hide()
-        # hides by default
 
         self.channelLabel = QLabel()
-        # adds a label for the channel's info text
+        """Current point/streak task"""
         self.channelLabel.setToolTip("Current task")
         # tooltip
         self.channelLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.channelLabel.setFixedSize(QSize(300, 30))
+        self.channelLabel.setMinimumSize(300, 30)
         # sets fixed size
         self.channelLabel.setWordWrap(True)
         # allows the text to wrap, if it's too long
-        self.channelLabel.hide()
-        # hides by default
 
         self.totalLabel = QLabel()
-        # total label (total found points)
+        """Total found points"""
         self.totalLabel.setToolTip("Total point accumulation")
         # tooltip
         self.totalLabel.setText("Nothing found yet")
         # sets initial text
         self.totalLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.totalLabel.hide()
-        # hides by default
 
         self.currentLabel = QLabel()
-        # index/progress label
+        """Point/streak progress index label (x / y)"""
         self.currentLabel.setToolTip("Progress")
         # tooltip
         self.currentLabel.setText(f"0 / {self.channelLength}")
         # sets initial progress
         self.currentLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.currentLabel.hide()
-        # hides by default
 
         self.pointGrabLayout.addWidget(self.channelLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.pointGrabLayout.addWidget(self.progressBar, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -1454,12 +1452,13 @@ class tepmWindow(QWidget):
 
     ### Predict UI ###
 
-        self.predictLayout = QGridLayout()
+        self.predictionPage = QWidget()
+        """Predictions page"""
+
+        self.predictLayout = QGridLayout(self.predictionPage)
         """A layout for the predictions"""
-        self.mainLayout.addLayout(self.predictLayout, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to main layout
-
-
+        self.mainStack.addWidget(self.predictionPage)
+        # adds the page to the stack
 
     ### Predict Details ###
 
@@ -1521,11 +1520,6 @@ class tepmWindow(QWidget):
         # min size
         self.predictTaskLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-
-        self.predictChannelLabel.hide()
-        self.predictLastUpdateLabel.hide()
-        self.predictTaskLabel.hide()
-        # hides all by default
 
         self.predictInfoLayout.addWidget(self.predictChannelLabel, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the layout (top middle)
@@ -1616,12 +1610,6 @@ class tepmWindow(QWidget):
         
         self.predictResultLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-
-        self.predictDetailLabel.hide()
-        self.predictTimerLabel.hide()
-        self.predictPoolLabel.hide()
-        self.predictResultLabel.hide()
-        # hides all by default
 
         self.predictDetailLayout.addWidget(self.predictStatusLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds status label to the 2nd nested layout (under the points)
@@ -2024,8 +2012,6 @@ class tepmWindow(QWidget):
                 QSizePolicy.Policy.Fixed
             )
             # sets a size policy
-            outcome.hide()
-            # hides the widget by default
 
     ### Bet Button Grouping ###
 
@@ -2089,10 +2075,6 @@ class tepmWindow(QWidget):
         # style sheet
         self.predictPointLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-
-        self.currentBetLabel.hide()
-        self.predictPointLabel.hide()
-        # hides all by default
 
         self.channelPointLayout.addWidget(self.predictPointLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds it to the channel point layout (below the bet pools/buttons)
@@ -2184,6 +2166,11 @@ class tepmWindow(QWidget):
         self.clearBetShortuct.activated.connect(lambda: self.betMasker("Clear"))
         # connects the keybind to the bet masking function
 
+        self.doubleBetShortcut = QShortcut(QKeySequence("Ctrl+G"), self)
+        # forms a keybind for doubling the current bet
+        self.doubleBetShortcut.activated.connect(lambda: self.betMasker("Double"))
+        # connects the keybind to the bet masking function
+
         self.halveBetShorcut = QShortcut(QKeySequence("Ctrl+H"), self)
         # forms a keybind for halving the current bet
         self.halveBetShorcut.activated.connect(lambda: self.betMasker("Halve"))
@@ -2194,18 +2181,14 @@ class tepmWindow(QWidget):
         self.savePredictionShorcut.activated.connect(self.savePredictions)
         # connects the keybind to the prediction saving function
 
-        self.predictAmountLine.hide()
-        self.predictBetButton.hide()
-        self.maxBetButton.hide()
-        self.defaultBetButton.hide()
-        # hides all elements by default
-
 
 
     ### Extra Actions ###
 
         self.extraButtonLayout = QGridLayout()
         """A layout that contains the additional buttons (mod, details, history)"""
+        self.extraButtonLayout.setObjectName("Menu/Exit Button Layout")
+        # object name
         self.predictSuperLayout.addLayout(self.extraButtonLayout, 1, 0, 2, 1, alignment=Qt.AlignmentFlag.AlignRight)
         # aligns to the right to go closer to the prediction buttons (spans 2 rows to fit next to the channel change)
 
@@ -2251,13 +2234,7 @@ class tepmWindow(QWidget):
         # connects the help button to the help window
         self.historyButton.clicked.connect(lambda: (self.savePredictions, ctrl.startHistorySignal.emit()))
         # connects the history button to the prediction save function and history window
-        
-        self.modButton.hide()
-        self.detailsButton.hide()
-        self.helpButton.hide()
-        self.historyButton.hide()
-        # hides all elements by default
-
+    
 
 
     ### Channel Swap ###
@@ -2296,10 +2273,6 @@ class tepmWindow(QWidget):
         ctrl.newPData.connect(self.predictUpdateUI)
         # connects the new prediction data signal to the predict UI updater
 
-        self.predictChannelLine.hide()
-        self.predictChannelSwapButton.hide()
-        # hides elements by default
-
 
 
     ### Exit UI ###
@@ -2317,8 +2290,6 @@ class tepmWindow(QWidget):
         # tooltip
         self.menuButton.setMinimumSize(150, 50)
         # size
-        self.menuButton.hide()
-        # hides by default
 
         self.exitButton = QPushButton("Exit")
         """A button to Exit"""
@@ -2326,8 +2297,6 @@ class tepmWindow(QWidget):
         # tooltip
         self.exitButton.setMinimumSize(150, 50)
         # size
-        self.exitButton.hide()
-        # hides by default
 
         self.stopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
         self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
@@ -2358,49 +2327,31 @@ class tepmWindow(QWidget):
 
 ### Browser Window UI ###
 
-    def browserWindow(self, status: bool):
+    def browserWindow(self):
         """A function to determine if the browser view should appear or not"""
-        if status and not browserOnly:
-        # if the status is True (meaning the auth token is all good and the browser isn't needed)
-            self.setMinimumSize(500, 300)
-            self.resize(500, 300)
-            # the window size
-        else:
         # if the status is False (auth token not valid, need to log in or something), or browser-only is enabled (then it should just be this window)
-            self.browserView.setMinimumSize(1100, 600)
-            # sets the browser size
-            self.setMinimumSize(1150, 800)
-            self.resize(1150, 800)
-            # resizes the window to "normal" size
-            self.browserView.show()
-            # shows the browser view
-            self.forceBrowserUI = True
-            # sets the boolean to True, so the browser doesn't go away
-            self.taskText.emit("")
-            # clears the task, hides the label
-            self.eop()
-            # shows the end of program/process buttons
+        self.mainStack.setCurrentWidget(self.browserStackPage)
+        # sets the browser page as the active view
+        self.refreshTokenButton.hide()
+        # hides the refresh button (not a question of token validity)
+        self.eop()
+        # shows the end of program/process buttons
 
 
 
 ### Headless UI ###
 
-    def headlessUI(self):
-        """A function to add the headless UI layout widgets"""
+    def headlessUI(self, action:str):
+        """A function to add the headless UI layout widgets (points/streaks)"""
 
-        if enablePoints and not enableStreaks:
+        if action == "Points":
         # if the point grabbing is enabled, streaks disabled
             self.channelLabel.setText("Starting point grabber...")
             # sets initial text
 
-        elif not enablePoints and enableStreaks:
+        elif action == "Streaks":
         # if the point grabbing is disabled, streaks enabled
             self.channelLabel.setText("Starting streak grabber...")
-            # sets initial text
-
-        elif predictChannel:
-        # if there's a predict channel set
-            self.channelLabel.setText("Starting prediction manager...")
             # sets initial text
 
         else:
@@ -2408,36 +2359,35 @@ class tepmWindow(QWidget):
             self.channelLabel.setText("Starting grabber...")
             # sets initial text
 
-        if predictChannel:
-        # if a predict channel is set
-            self.progressBar.hide()
-            self.totalLabel.hide()
-            self.currentLabel.hide()
-            # hides both point/streak labels + progress bar
-
-        elif overrideChannel:
+        if overrideChannel:
         # if the override channel is set (doesn't really need a progress bar, 1/1)
+
             self.totalLabel.hide()
             self.currentLabel.hide()
             self.progressBar.hide()
             # hides both point/streak labels + progress bar
 
-        elif not predictChannel and not overrideChannel:
-        # if predictChannel and override aren't set (must be a list)
+            self.mainStack.setCurrentWidget(self.pointGrabPage)
+            # sets the point grab page as visible
+
+        else:
+        # if override isn't set (must be a list)
+
+            self.totalLabel.setText("Nothing found yet")
+            # sets initial text
+            self.currentLabel.setText(f"0 / {len(self.channels)}")
+            # sets the first channel text
+            self.progressBar.setValue(0)
+            # resets progress bar
+
             self.progressBar.show()
             self.channelLabel.show()
             self.totalLabel.show()
             self.currentLabel.show()
             # shows the items
 
-
-
-### Tooltip ###
-
-    def manageTooltip(self, tooltip: str):
-        """A function to manage the text above the browser view before it goes away"""
-        self.taskView.setText(tooltip)
-        # sets the text to the passed string
+            self.mainStack.setCurrentWidget(self.pointGrabPage)
+            # sets the point grab page as visible
 
 
 
@@ -2591,7 +2541,7 @@ class tepmWindow(QWidget):
                         # if the expiry date is set
                             if streak > 0:
                             # active, real streak
-                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nThis streak is worth {streakPoints} points")
+                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nThis streak is worth {streakPoints:,.0f} points")
                                 # sets the text to match
                             else:
                                 self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}")
@@ -2600,7 +2550,7 @@ class tepmWindow(QWidget):
                         # if there's an expiry date
                             if streak > 0:
                             # active, real streak
-                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nThis streak is worth {streakPoints} points\nStreak expiring at {expiryDate}!")
+                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nThis streak is worth {streakPoints:,.0f} points\nStreak expiring at {expiryDate}!")
                                 # sets warning
                             else:
                                 self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nStreak expiring at {expiryDate}!")
@@ -2675,20 +2625,20 @@ class tepmWindow(QWidget):
                     # if streak is <100, and one of: the first number of streak is an 8 (eighty-X or just 8) or it's 11 or 18
                         if not expiryDate:
                         # no expiry date
-                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}")
+                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}")
                             # sets the text to match (it has "an" as prefix, not "a")
                         else:
                         # if there's a date
-                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
+                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
                             # sets the text to match (it has "an" as prefix, not "a")
                     else:
                         if not expiryDate:
                         # no expiry date
-                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}")
+                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}")
                             # sets the text to match
                         else:
                         # yes expiry date
-                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
+                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
                             # sets text with streak warning
 
             self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
@@ -2704,9 +2654,8 @@ class tepmWindow(QWidget):
             # boolean for whether an error occurred
             streak = progressDict["streak"]
             # the current channel's streak
-            # grabs all the relevant information from the passed dictionary
 
-            pointString = f"{points:,} points"
+            pointString = f"{points:,.0f} points"
             # formats the number to use formatting (no decimals, thousand comma)
 
             if error:
@@ -2717,9 +2666,6 @@ class tepmWindow(QWidget):
             # no error ->
                 self.channelLabel.setText(f"{pointString} and a streak of {streak} found for {channel}")
                 # sets the text to match
-
-            self.progressBar.setValue(100)
-            # sets the progress bar value
 
 
 
@@ -2756,15 +2702,16 @@ class tepmWindow(QWidget):
             expiryString = f""
             # sets the string to naught
         else:
-        # if it's passed and isn't empty
-            for x in range (len(expiryList)):
-            # goes through all the elements
-                if not expiryList[x]:
-                # if the value is False
-                    expiryList.pop(x)
-                    # deletes it
-                
-            expiryString = f"Channels with expiring streaks: {", ".join(expiryList)}"
+        # list is passed and not empty
+            expiryStringList = []
+            # empty list of strings
+            for entry in expiryList:
+            # for every dictionary entry (channel = {"expires": stamp})
+                entryString = f"{entry}: {entry["expires"]}"
+                # forms a string like: "caseoh_: may 17th"
+                expiryStringList.append(entryString)
+                # adds the string into the list
+            expiryString = f"Channels with expiring streaks: {", ".join(expiryStringList)}"
             # turns the list into a string
 
         if not overrideChannel:
@@ -2790,17 +2737,15 @@ class tepmWindow(QWidget):
         # if override channel was set
             if errors == 0:
             # no errors
-                finalString = f"{points} points and a streak of {streak} for {overrideChannel}"
+                finalString = f"{overrideChannel}:\n{points:,.0f} points and a streak of {streak}!"
                 # forms final string
             else:
             # error
-                finalString = f"Couldn't get points or streak for {overrideChannel}"
+                finalString = f"Couldn't get points and/or streak for {overrideChannel}!"
                 # forms final string with error
 
         self.channelLabel.setText(finalString)
         # final UI update with the formed string
-        self.currentLabel.deleteLater()
-        # deletes the index label
         self.eop()
         # enables menu buttons (end of program)
 
@@ -2837,6 +2782,10 @@ class tepmWindow(QWidget):
         # exit button
             self.savePredictions()
             # calls the savePredictions to save current stats
+            ctrl.browserProfile.deleteLater()
+            self.browserPage.deleteLater()
+            self.browserView.deleteLater()
+            # deletes the browser-related variables
             app.exit()
             # closes the app
 
@@ -2858,12 +2807,12 @@ class tepmWindow(QWidget):
             predictionHistory = {}
             # empty map
         
-        newPredictionHistory = predictionHistory | self.pastPredictions
-        # merges the prediction history dictionaries into one "new" one (uses the self.pastPrediction values if clashing)
+        self.pastPredictions = predictionHistory | self.pastPredictions
+        # merges the prediction history dictionaries into one "new" one (uses the newer self.pastPrediction values if clashing)
 
         with open(predictHistoryPath, "w", encoding="utf-8") as nprdH:
         # opens the file in write mode
-            json.dump(newPredictionHistory, nprdH, indent=3, default=str, ensure_ascii=False)
+            json.dump(self.pastPredictions, nprdH, indent=3, default=str, ensure_ascii=False)
             # dumps the prediction history into file
 
         self.predictionUserInform("Saved prediction history!")
@@ -2876,12 +2825,8 @@ class tepmWindow(QWidget):
     def uiStyle(self, action:str):
         """Function to change the UI when called for"""
 
-        self.taskView.hide()
-        # hides the task viewer
         self.refreshTokenButton.hide()
-        # hides the refresh button
-        self.browserView.hide()
-        # hides the browser view
+        # hides the token button by default
 
         if action == "Predict":
         # prediction screen
@@ -2895,20 +2840,23 @@ class tepmWindow(QWidget):
 
         elif action == "Browser":
         # if it's browser-only view
+
+            self.setMinimumSize(1150, 850)
+            self.resize(1150, 850)
+            # resizes the window to "normal" browser size
+
             self.swapMainUI(action)
             # calls the UI changer
-            self.browserWindow(True)
-            # calls the browser window with False (forces full window size and shows it)
         
-        elif action == "Points":
+        else:
         # points/streaks view
+
+            self.setMinimumSize(500, 600)
+            self.resize(500, 600)
+            # the window size
 
             self.swapMainUI(action)
             # swaps the elements
-
-            self.setMinimumSize(500, 300)
-            self.resize(500, 300)
-            # the window size
 
             QTimer.singleShot(2000, self.startPointWorker)
             # calls the point manager to start getting points
@@ -2920,76 +2868,41 @@ class tepmWindow(QWidget):
     def swapMainUI(self, action:str):
         """Function that swaps the UI layout between predict and point/streak grab"""
 
-        self.menuButton.hide()
-        self.exitButton.hide()
-        # hides the menu buttons
+        self.menuButton.setParent(None)
+        self.exitButton.setParent(None)
+        # removes the parent layout, so it can be re-given here
 
         if action == "Predict":
         # prediction UI activate
-            for element in self.pointGrabItems:
-                element.hide()
-                # hides the point elements
-            for element in self.predictItems:
-                element.show()
-                # shows the prediction base elements
-            for element in self.predictInfoItems:
-                element.show()
-                # shows the prediction labels
 
-            try:
-            # ensures the stop buttons are active in a visible layer
-                self.pointGrabStopLayout.removeWidget(self.menuButton)
-                self.pointGrabStopLayout.removeWidget(self.exitButton)
-                # removes the buttons from the point grab layout
-                self.stopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
-                self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-                # adds them to the stop layout (prediction UI)
-            except:
-                print("Couldn't swap to predict")
+            self.stopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+            self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+            # adds them to the stop layout (prediction UI)
+
+            self.savePredictions()
+            # calls the prediction save to get the current map of past predictions
 
             self.predictUI("Init")
             # calls the prediction UI to start
 
         elif action == "Browser":
-        # browser
-            try:
-            # ensures the stop buttons are active in a visible layer 
-                self.pointGrabStopLayout.removeWidget(self.menuButton)
-                self.pointGrabStopLayout.removeWidget(self.exitButton)
-                # removes the buttons from the point grab layout
-                self.stopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
-                self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-                # adds them to the stop layout (prediction UI)
-            except:
-                print("Couldn't swap to browser")
+        # browser view UI activate
+
+            self.browserLayout.addWidget(self.menuButton, 2, 0, alignment=Qt.AlignmentFlag.AlignRight)
+            self.browserLayout.addWidget(self.exitButton, 2, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+            # adds them to the browser layout
+
+            self.browserWindow()
+            # calls the browser window (forces full window size and shows it)
 
         else:
-        # point grab UI activate
-            for element in self.predictItems:
-                element.hide()
-                # hides the prediction base elements
-            for element in self.predictInfoItems:
-                element.hide()
-                # hides the prediction labels
-            for element in self.predictOutcomeWidgets:
-                element.hide()
-                # hides the prediction widgets
-            for element in self.pointGrabItems:
-                element.show()
-                # shows the point elements
+        # point / streak grab UI activate
 
-            try:
-            # ensures the stop buttons are active in a visible layer
-                self.stopLayout.removeWidget(self.menuButton)
-                self.stopLayout.removeWidget(self.exitButton)
-                # removes the buttons from the stop layout (prediction UI)
-                self.pointGrabStopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
-                self.pointGrabStopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
-                # adds them to the point grab layout
-            except:
-                print("Couldn't swap to points")
+            self.pointGrabStopLayout.addWidget(self.menuButton, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+            self.pointGrabStopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+            # adds them to the point grab layout
 
-            self.headlessUI()
+            self.headlessUI(action)
             # calls the headless UI to start
 
 
@@ -3001,6 +2914,10 @@ class tepmWindow(QWidget):
 
         if action == "Init":
         # init action
+            self.mainStack.setCurrentWidget(self.predictionPage)
+            # sets the prediction page as visible
+            self.predictionPage.show()
+            # enables the prediction page
             ctrl.predictionWorkerStart()
             # starts the predict/balance refresh thread loop
             self.eop()
@@ -3133,6 +3050,8 @@ class tepmWindow(QWidget):
         # starts total point counter at 0
         shouldUpdate = True
         # boolean for "should the full package be updated"
+        missedResolve = False
+        # boolean for "did a new prediction start before the previous one was registered"
 
         if prediction["success"]:
         # if it was a success
@@ -3161,20 +3080,15 @@ class tepmWindow(QWidget):
             eventType = prediction["type"]
             # grabs the event type (active, locked, resolved)
 
+            oldEvent = self.predictionID.get(eventID, {"state": False})
+            # gets the previous prediction's data
+            oldEventType = oldEvent["state"]
+            # gets the previous event's type (active, locked, resolved)
+
             self.predictChannelPoints = prediction.get("balance", 0)
             # sets the balance to match (default 0 if not found)
             self.predictPointLabel.setText(f"Balance: {self.predictChannelPoints:,.0f} {pointsString}")
             # update the balance label
-
-            if (oldID == eventID) and (oldType == eventType):
-            # if the IDs match and the types match (same dictionary)
-                shouldUpdate = False
-                # changes the boolean to prevent full update
-            else:
-            # not the same data
-                self.predictionID["lastID"] = eventID
-                self.predictionID["lastType"] = eventType
-                # copies the new values over so they can be compared next time
 
             caseName = prediction.get("caseName", False)
             # grabs the case sensitive name, if it's available
@@ -3183,6 +3097,56 @@ class tepmWindow(QWidget):
             # if the case sensitive name is set and it's not the same as the currently displayed channel
                 self.currentChannel = caseName
                 # updates the internal name scheme
+                newChannel = True
+                # boolean that stores whether it's a new channel or same as the previous
+            else:
+            # case name == current channel (no swap)
+                newChannel = False
+                # boolean that stores whether it's a new channel or same as the previous
+
+            if oldEventType and (oldEventType != eventType):
+            # if there is a previously stored event type and the new one doesn't match it
+                if oldEventType == "locked" and eventType == "active":
+                # if the previously stored state was locked, and the new one is active (means the resolved was missed)
+                    missedResolve = True
+                    # sets the boolean to True
+
+            if (oldID == eventID) and (oldType == eventType):
+            # if the IDs match and the types match (same dictionary)
+                shouldUpdate = False
+                # changes the boolean to prevent full update
+            else:
+            # not the same data
+                self.predictionID["lastID"] = eventID
+                # swaps the event ID for the prediction ID
+
+                if (self.predictionID.get("lastType", None) == "active") and (eventType == "resolved"):
+                # if the event went from active to resolved (only realistically possible if swapping streams or refund)
+                    if newChannel:
+                    # if it's a new channel (then refund-checking doesn't matter)
+                        pass
+                        # stops checking
+                    else:
+                    # not a new channel, event went from active -> resolved
+                        lastNumbers = self.predictionNumbers.get(eventID, {"balance": None})
+                        # stores the event ID's bet-related numbers (if they exist)
+                        if lastNumbers.get("balance", None) is not None:
+                        # if the balance exists from last store
+                            pointChange = self.predictChannelPoints - lastNumbers["balance"]
+                            # calculates how much the points changed by 
+                            bet = lastNumbers.get("bet", 0)
+                            # gets the previously stored bet
+                            if bet > 0:
+                            # if bet isn't 0
+                                payoutMulti = (pointChange / bet)
+                                # calculates a payout multiplier
+                                if 0.9 <= payoutMulti <= 1.1:
+                                # if the payout multiplier falls in between 0.9 and 1.1 (means it more than likely was NOT a payout, but a return of bet)
+                                    eventType = "refunded"
+                                    # changes the eventType to refunded
+
+                self.predictionID["lastType"] = eventType
+                # copies the new values over so they can be compared next time
 
             timeNow = datetime.datetime.now().astimezone().strftime("%#H:%M:%S")
             # grabs current time and formats it
@@ -3230,7 +3194,7 @@ class tepmWindow(QWidget):
                             # clears the timer field
                     except:
                     # if it's not yet defined
-                        None
+                        pass
                         # doesn't do anything
                     self.predictTimerLabel.setText(" ")
                     # empties the text field (preserves the spacing, no actual timer)
@@ -3251,14 +3215,14 @@ class tepmWindow(QWidget):
             ownVoteWin = prediction.get("sumWon", 0)
             # gets the total won points (null until resolved)
             storedVoteDict = self.predictionNumbers.get(eventID, {"bet": 999999})
-            # grabs the stored dictionary from prediction numbers (falls back to dict with bet = 999999 if doesn't exist
+            # grabs the stored dictionary from prediction numbers (falls back to dict with bet = 999999 if it doesn't exist)
 
             if not (ownVoteSum == storedVoteDict["bet"]):
             # if the vote sum doesn't match the previously stored vote
                 shouldUpdate = True
                 # sets the boolean to True so the UI gets fully updates
-                self.predictionNumbers[eventID] = {"bet": ownVoteSum, "option": ownVoteID}
-                # stores the bet and voted outcome in the dictionary with the eventID as key
+                self.predictionNumbers[eventID] = {"bet": ownVoteSum, "option": ownVoteID, "balance": self.predictChannelPoints}
+                # stores the bet, voted outcome and current balance in the dictionary with the eventID as key
 
             if not ownVoteID:
             # no vote ID = no bet (it already gets checked in grab to be for *this* event)
@@ -3274,6 +3238,15 @@ class tepmWindow(QWidget):
             
             self.predictionKeys[eventID] = {}
             # creates a keymap for this event (or clears)
+
+            if self.predictionID.get(eventID, False):
+            # if the event has an entry already
+                self.predictionID[eventID]["state"] = eventType
+                # updates the current event's state to match
+            else:
+            # no entry for the event yet
+                self.predictionID[eventID] = {"state": eventType}
+                # creates a new entry instead
 
             buttonCount = 0
             # starts a counter for buttons
@@ -3292,7 +3265,8 @@ class tepmWindow(QWidget):
                 # gets the outcome ID
                 if ownVoteID == optionID:
                 # if the user vote matches this vote
-                    self.predictionID[eventID] = {"title": optionName, "id": optionID}
+                    self.predictionID[eventID]["title"] = optionName
+                    self.predictionID[eventID]["id"] = optionID
                     # stores the name and ID of the outcome voted for, in this event
 
                 optionPoints = outcomes[x]["totalPoints"]
@@ -3408,8 +3382,8 @@ class tepmWindow(QWidget):
                     ctrl.timerSwap.emit(3)
                     # if the event is active, speeds up update timer to get more data quicker
 
-                else:
-                # prediction isn't active (locked/resolved)
+                if eventType != "active" or missedResolve:
+                # prediction isn't active (locked/resolved), or there was a resolved prediction that was missed (this is only true if it's active, so it can't double-submit)
                     self.maxBetButton.setEnabled(False)
                     self.defaultBetButton.setEnabled(False)
                     self.predictBetButton.setEnabled(False)
@@ -3443,12 +3417,27 @@ class tepmWindow(QWidget):
                             self.predictButtonManager("Lock", None, True)
                             # calls to lock everything, no selection
 
+                    elif missedResolve:
+                    # if there was a missed resolved prediction
+                        prediction = prediction["oldPred"]
+                        # swaps the dictionary to use the old prediction's dictionary instead
+                        if prediction:
+                        # if the dictionary is valid (if none is found, it's set to False)
+                            if not self.pastPredictions.get(eventID, None):
+                            # if there's no stored details for this event/prediction already
+                                chartStamp = prediction["chartStamp"]
+                                # grabs the datetime formatted timestamp to pass
+                                if ownVoteID:
+                                # if user voted
+                                    self.pastPredictions[eventID] = {"channel": self.currentChannel, "title": title, "timestamp": chartStamp, "outcomes": outcomesList, "winner": winOutcomeTitle, "balance": self.predictChannelPoints, "bet": ownVoteSum, "W/L": winState, "gain": newPoints}
+                                    # stores the event details with vote details
+                                else:
+                                # user didn't vote
+                                    self.pastPredictions[eventID] = {"channel": self.currentChannel, "title": title, "timestamp": chartStamp, "outcomes": outcomesList, "winner": winOutcomeTitle, "balance": self.predictChannelPoints}
+                                    # stores the event details with no vote details
+
                     else:
                     # prediction is resolved (paid out)
-
-                        print("Winning outcome (waiting for a refund):", prediction)
-                        # DEBUG
-
                         winOutcomeDict = prediction["winner"]
                         # gets the winning outcome dictionary, otherwise uses set dictionary
                         winOutcomeID = winOutcomeDict["id"]
@@ -3456,9 +3445,9 @@ class tepmWindow(QWidget):
                         winOutcomeTitle = winOutcomeDict["title"]
                         # grabs the winning title
 
-                        if winOutcomeID == "refund":
+                        if winOutcomeID == "refunded":
                         # if outcome is a refund
-                            self.predictLabelUpdater(f"Prediction was refunded!", f"{title}", f"Started by {creator}, ended {timestamp}", "orange")
+                            self.predictLabelUpdater(f"Prediction was refunded!", f"{title}", f"Started by {creator}, ended {timestamp}", "red")
                             # calls the updater to change UI
                             self.betLabelUpdater("Bet refunded", "Green")
                             # ensures the bet is cleared
@@ -3491,7 +3480,7 @@ class tepmWindow(QWidget):
                                 # if the stored is not the same
                                     self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
                                     # text if user bet and lost
-                                    self.betLabelUpdater(f"You lost {ownVoteSum:.0f} {pointsString}", "Red")
+                                    self.betLabelUpdater(f"You lost {ownVoteSum:,.0f} {pointsString}", "Red")
                                     # bet label update
                                     winState = "Loss"
                                     # stores a winstate
@@ -3516,8 +3505,19 @@ class tepmWindow(QWidget):
                             # user didn't vote
                                 self.pastPredictions[eventID] = {"channel": self.currentChannel, "title": title, "timestamp": chartStamp, "outcomes": outcomesList, "winner": winOutcomeTitle, "balance": self.predictChannelPoints}
                                 # stores the event details with no vote details
+
         else:
         # if it wasn't a success (usually a stream with no prior history)
+            errorMsg = prediction["error"]
+            # stores the error message
+            if "10054" in errorMsg:
+            # if the windows network error 10054 is present in the error string
+                errorMsg = "Windows network error! Please wait..."
+                # overrides the error message 
+
+            self.predictionUserInform(f"Failed to get prediction details for {predictChannel}!\n({errorMsg})")
+            # changes the text to inform (includes error message)
+
             self.maxBetButton.setEnabled(False)
             self.defaultBetButton.setEnabled(False)
             self.predictBetButton.setEnabled(False)
@@ -3546,9 +3546,6 @@ class tepmWindow(QWidget):
             # sets empty bet button name
             self.predictPoints1.setText(f"0 Points\n(100%)\n0 users")
             # sets placeholder pool label for the first widget
-
-            self.predictionUserInform(f"Failed to get prediction details for {predictChannel}!\n({prediction["error"]})")
-            # changes the text to inform (includes error message)
 
 
 
@@ -3638,8 +3635,9 @@ class tepmWindow(QWidget):
                     ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, balance)
                     # calls the pyQt signal with the details (bet int, outcomeID)
                 else:
-                    self.predictionUserInform("Cannot bet on two outcomes!")
-                    # user inform
+                # the bet is not the same as the selected button (more than likely visually screwed)
+                    ctrl.makeBet.emit(bet, eventID, currentBet, optionName, balance)
+                    # sends the bet with the current bet ID instead (overrides the selected button, in case there's non)
             else:
             # if it wasn't defined (either didn't get set properly or failed to grab)
                 self.predictionUserInform(f"Failed to send bet due to internal error!")
@@ -3757,7 +3755,7 @@ class tepmWindow(QWidget):
 
         if action == "Clear":
         # clear via keybind
-            self.predictAmountLine.setText("")
+            self.predictAmountLine.setText(f"")
             # clears the bet
             return
             # stops
@@ -3771,22 +3769,35 @@ class tepmWindow(QWidget):
             currentBet = 0
             # sets to 0
 
-        if action == "Halve":
-        # halve request via keybind
+        if action == "Halve" or action == "Double":
+        # halve/double request via keybind
             if currentBet != 0:
             # if the bet isn't 0
-                currentBet = int(currentBet / 2)
-                # splits the bet in half
+                if action == "Halve":
+                # halve request
+                    currentBet = int(currentBet / 2)
+                    # splits the bet in half
+                else:
+                # double request
+                    currentBet = int(currentBet * 2)
+                    # doubles the bet
                 self.predictAmountLine.setText(f"{currentBet}")
                 # sets the current bet
                 return
                 # stop
             else:
             # bet is 0
-                self.predictionUserInform("Cannot halve 0 points!")
-                # user inform
+                if action == "Halve":
+                # halve request
+                    self.predictionUserInform("Cannot halve 0 points!")
+                    # user inform
+                else:
+                # double request
+                    self.predictionUserInform("Cannot double 0 points!")
+                    # user inform
                 return
                 # stop
+        
 
         if currentBet == 0 and (action not in ["Max", "Default"]):
         # if the bet is 0, and it's not a Max/Default (those set the points after)
@@ -3859,12 +3870,12 @@ class tepmWindow(QWidget):
             # sets the stylesheet for the class
 
         if action != "Browser":
-        # ensures it's not browser only 
+        # ensures it's not browser only
             self.extractAuthToken(action)
             # calls the next stage
         else:
         # action is browser
-            self.browserWindow(True)
+            self.browserWindow()
             # calls the browser window shower
 
 
@@ -3873,11 +3884,6 @@ class tepmWindow(QWidget):
 
     def extractAuthToken(self, action):
         """Function to get the auth token from storage"""
-
-        if not self.forceBrowserUI:
-        # if the force browser boolean isn't true (only true if already ran once)
-            self.browserShow.emit(True)
-            # tells the browser to hide, but show the UI
 
         self.authTokenTimer = QTimer()
         """A timer to forcefully skip auth token extracting if not done"""
@@ -3959,24 +3965,23 @@ class tepmWindow(QWidget):
                 # user inform
         except:
         # if the channel check fails
-            self.authNotValid()
+            self.authNotValid(action)
             # calls the invalid token function
 
 
 
 ### Auth Not Valid ###
 
-    def authNotValid(self):
+    def authNotValid(self, action:str):
         """Function to handle auth token not being valid"""
         self.taskText.emit("Token could not be validated, ensure you're logged in to Twitch\nIf this persists, ensure the hashes in hashes.json are valid")
         # changes UI text to error
-        self.browserShow.emit(False)
-        # tells browserShow to show the window
-        try:
-            self.refreshTokenButton.show()
-            # shows the refresh button
-        except:
-            None
+        self.mainStack.setCurrentWidget(self.browserStackPage)
+        # sets the browser view active
+        self.refreshTokenButton.show()
+        # shows the refresh token button
+        self.authInvalidAction = action
+        # stores the action the user was trying to perform in self
 
 
 
@@ -4029,8 +4034,8 @@ class tepmWindow(QWidget):
     def taskLabelChanger(self, text):
         """Function to change the task view via external signals"""
         self.predictionUserInform(text)
-        self.taskView.setText(text)
-        # swaps both predict task and taskView (either one could be up)
+        self.taskPageText.setText(text)
+        # swaps both predict task and task page texts (either one could be up)
 
 
 
@@ -4121,7 +4126,6 @@ class tepmWindow(QWidget):
 
 def channelIDGrab(state, channel):
     """A function to grab the channelID"""
-    global reqSession
 
     authToken = state.authToken
     # gets the authorisation token from the app state variable
@@ -4149,16 +4153,22 @@ def channelIDGrab(state, channel):
             }
         }
 
-    idRequest = reqSession.post(rURL, json = idPayload, headers = headers)
-    # makes request to get the 
-    idData = idRequest.json()
-    # stores the resulting data json
+    try:
+    # tries to make a request
+        idRequest = reqSession.post(rURL, json = idPayload, headers = headers)
+        # makes request to get the 
+        idData = idRequest.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # attempts to access the returned json
         if idData and idData["data"]:
         # if there's a return package and the package has "data"
-            channelID = idData["data"]["channel"]["id"]
+            channelID = int(idData["data"]["channel"]["id"])
             # grabs the channel ID from the returned data package
             return {"success": True, "channelID": channelID}
             # returns the channel ID
@@ -4176,7 +4186,6 @@ def channelIDGrab(state, channel):
 
 def pointGrabber(state, channel: str) -> dict:
     """The function that grabs the channel points via GraphQL"""
-    global reqSession
 
     authToken = state.authToken
     # gets the authorisation token from the app state variable
@@ -4203,10 +4212,16 @@ def pointGrabber(state, channel: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -4242,9 +4257,8 @@ def pointGrabber(state, channel: str) -> dict:
 
 ### Streak Grabber ###
 
-def streakGrabber(state, channel: str, channelID:int = None) -> dict:
+def streakGrabber(state, channel: str, channelID:str = None) -> dict:
     """The function that grabs streak information"""
-    global reqSession
 
     rURL = "https://gql.twitch.tv/gql"
     # the endpoint to make requests to
@@ -4265,7 +4279,7 @@ def streakGrabber(state, channel: str, channelID:int = None) -> dict:
         if tempChannelID["success"]:
         # if the channel ID dictionary is a success
             channelID = tempChannelID["channelID"]
-            # stringifies the channelID
+            # grabs the channel ID
     
     if channelID != None:
     # if the channelID is now not None
@@ -4273,8 +4287,9 @@ def streakGrabber(state, channel: str, channelID:int = None) -> dict:
         # forms a payload from the required information
             "operationName": hashMap["Streak Operation"],
             "variables": {
-                "channelID": channelID
-                # which channel to "login" to
+                "channelID": str(int(channelID)),
+                # ensures the channelID is in string form
+                "shouldIncludeAllSuspendedStreaks": False
             },
             "extensions": {
                 "persistedQuery": {
@@ -4285,10 +4300,16 @@ def streakGrabber(state, channel: str, channelID:int = None) -> dict:
             }
         }
 
-        request = reqSession.post(rURL, json = payload, headers = headers)
-        # forms a data request
-        data = request.json()
-        # stores the resulting data json
+        try:
+        # tries to make a request
+            request = reqSession.post(rURL, json = payload, headers = headers)
+            # forms a data request
+            data = request.json()
+            # stores the resulting data json
+        except Exception as reqErr:
+        # if there's an error (typically network-related)
+            return {"success": False, "error": reqErr}
+            # returns dictionary with fail and error
 
         try:
         # tries to read the received data file
@@ -4335,8 +4356,6 @@ def streakGrabber(state, channel: str, channelID:int = None) -> dict:
 def statusGrabber(state, channel: str) -> dict:
     """The function that checks user status in a channel"""
     
-    global reqSession
-
     rURL = "https://gql.twitch.tv/gql"
     # the endpoint to make requests to
 
@@ -4365,10 +4384,16 @@ def statusGrabber(state, channel: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -4407,7 +4432,6 @@ def statusGrabber(state, channel: str) -> dict:
 
 def grabPrediction(state, channel: str) -> dict:
     """The function that grabs prediction data"""
-    global reqSession
 
     rURL = "https://gql.twitch.tv/gql"
     # the endpoint to make requests to
@@ -4437,10 +4461,16 @@ def grabPrediction(state, channel: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -4486,7 +4516,6 @@ def grabPrediction(state, channel: str) -> dict:
 
 def sendPrediction(state, bet: int, eventID: str, outcomeID: str) -> dict:
     """Function that makes a bet (prediction) on given channel"""
-    global reqSession
 
     rURL = "https://gql.twitch.tv/gql"
     # the endpoint to make requests to
@@ -4520,10 +4549,16 @@ def sendPrediction(state, bet: int, eventID: str, outcomeID: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -4566,7 +4601,6 @@ def startPrediction(state, title: str, duration: int, outcomes: list, channelID:
         Outcomes needs to be a list with 10 > outcomes >= 2, in format: \n 
         [{"title": opt1, "color": "BLUE"}, {"title": opt2, "color": "PINK"}]
         \n If more than 2 options are set, they all use BLUE"""
-    global reqSession
 
     print("An attempt was made to start a prediction", title, channelID, duration, outcomes)
 
@@ -4591,7 +4625,7 @@ def startPrediction(state, title: str, duration: int, outcomes: list, channelID:
         if tempChannelID["success"]:
         # if the channel ID dictionary is a success
             channelID = tempChannelID["channelID"]
-            # stringifies the channelID
+            # grabs the channel ID
 
     if channelID != None:
     # if it's now set
@@ -4601,9 +4635,13 @@ def startPrediction(state, title: str, duration: int, outcomes: list, channelID:
             "variables": {
                 "input": {
                     "title": title,
-                    "channelID": channelID,
+                    # name of prediction
+                    "channelID": str(int(channelID)),
+                    # ensures the channelID is in string form
                     "predictionWindowSeconds": duration,
+                    # how many seconds the prediction is open for
                     "outcomes": outcomes
+                    # list of outcomes
                 }
             },
             "extensions": {
@@ -4614,10 +4652,16 @@ def startPrediction(state, title: str, duration: int, outcomes: list, channelID:
             }
         }
 
-        request = reqSession.post(rURL, json = payload, headers = headers)
-        # forms a data request
-        data = request.json()
-        # stores the resulting data json
+        try:
+        # tries to make a request
+            request = reqSession.post(rURL, json = payload, headers = headers)
+            # forms a data request
+            data = request.json()
+            # stores the resulting data json
+        except Exception as reqErr:
+        # if there's an error (typically network-related)
+            return {"success": False, "error": reqErr}
+            # returns dictionary with fail and error
 
         try:
         # tries to read the received data file
@@ -4661,7 +4705,6 @@ def startPrediction(state, title: str, duration: int, outcomes: list, channelID:
 
 def payoutPrediction(state, eventID: str, outcomeID: str) -> dict:
     """Function that pays out a given prediction"""
-    global reqSession
 
     print("An attempt was made to pay out a prediction", eventID, outcomeID)
 
@@ -4694,11 +4737,17 @@ def payoutPrediction(state, eventID: str, outcomeID: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
-    print(data)
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+        print(data) # DEBUG
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -4738,7 +4787,6 @@ def payoutPrediction(state, eventID: str, outcomeID: str) -> dict:
 
 def deletePrediction(state, eventID: str) -> dict:
     """Function that deletes and refunds a given prediction"""
-    global reqSession
 
     print("An attempt was made to delete a prediction", eventID)
 
@@ -4770,11 +4818,17 @@ def deletePrediction(state, eventID: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
-    print(data)
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+        print(data) # DEBUG
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -4814,7 +4868,6 @@ def deletePrediction(state, eventID: str) -> dict:
 
 def lockPrediction(state, eventID: str) -> dict:
     """Function that locks/closes a given prediction"""
-    global reqSession
 
     print("An attempt was made to lock a prediction", eventID)
 
@@ -4846,11 +4899,17 @@ def lockPrediction(state, eventID: str) -> dict:
         }
     }
 
-    request = reqSession.post(rURL, json = payload, headers = headers)
-    # forms a data request
-    data = request.json()
-    # stores the resulting data json
-    print(data)
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        data = request.json()
+        # stores the resulting data json
+        print(data) # DEBUG
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": reqErr}
+        # returns dictionary with fail and error
 
     try:
     # tries to read the received data file
@@ -5010,7 +5069,9 @@ class PointWorker(QObject):
                         # if there's a set expiry date (not None)
                             expiring = True
                             # sets the flag to True so it gets spotted
-                            self.expiringList.append({channel: streak.get("expires", "Soon")})
+                            expiryDate = streak.get("expires", "Soon")
+                            # gets the date from the dictionary (has a fallback of "Soon")
+                            self.expiringList.append({channel["expires"]: expiryDate})
                             # adds the expiring channel's expiry date to a list to display at the end ("soon" as fallback)
                         else:
                         # if there's no date (not expiring)
@@ -5121,7 +5182,7 @@ class PointWorker(QObject):
                 json.dump(streakMap, strk, indent=3)
                 # dumps the map into file
             
-            self.csvWriter(csvEntries, self.errorCount, self.maxStreak, self.expiringList)
+            self.csvWriter(csvEntries, self.errorCount, self.maxStreak, self.expiringList, None)
             # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
 
         else:
@@ -5147,7 +5208,7 @@ class PointWorker(QObject):
                 # stores string
                 errorBool = True
                 # sets the error bool to true (will tell the UI to display error text)
-                self.errorCount = (self.errorCount + 1)
+                self.errorCount += 1
                 # on error, adds an error to counter
 
             streak = streakGrabber(self.state, channel)
@@ -5196,14 +5257,14 @@ class PointWorker(QObject):
             self.pointWorkerProgress.emit(self.progressDict)
             # sends a progress update to the headless UI updater
 
-            self.csvWriter(csvEntries, self.errorCount, self.maxStreak)
+            self.csvWriter(csvEntries, self.errorCount, streakNum, None, foundPoints)
             # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
 
             
 
 ### CSV Writer ###
 
-    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int, expiryList: list=None, singlePoints: int = None):
+    def csvWriter(self, csvEntries: dict, errors: int, maxStreak: int, expiryList: list=None, overridePoints: int = None):
         """The function that writes the final CSV"""
 
         rows = []
@@ -5239,12 +5300,12 @@ class PointWorker(QObject):
         # if the expiry list isn't defined (not passed)
             expiryList = []
             # makes an empty list
-        if not singlePoints:
+        if not overridePoints:
         # if the singlePoints wasn't passed
-            singlePoints = 0
+            overridePoints = 0
             # sets to 0
 
-        self.pointWorkerDone.emit(errors, maxStreak, expiryList, singlePoints)
+        self.pointWorkerDone.emit(errors, maxStreak, expiryList, overridePoints)
         # once done, sends a signal to the finished pyqt signal with the error count, highest streak and expiration list
         self.running = False
         # stops itself
@@ -5848,8 +5909,8 @@ class SuperController(QObject):
             # stores and starts the main window class
         else:
         # if it has been defined (returning)
-            self.mainWindow.show()
-            # shows the window
+            pass
+            # does nothing (continuer will take care of all)
 
 ### Main Window Continuer ###
 
@@ -5866,13 +5927,17 @@ class SuperController(QObject):
             # sets the boolean to True so it doesn't do it next time
             self.mainWindow.show()
             # shows the main window
+        else:
+        # boolean is True, meaning it has been defined and is hiding
+            self.windowSwap(action)
+            # calls the window swap with the action passed
     
 
 
-### Worker Starter Function ###
+### Worker Starter Generic Function ###
 
     def startWorker(self, workerClass, dataFunction, threadName:str):
-        """Function to start the different worker classes"""
+        """Shared function to start the different worker classes"""
         
         thread = QThread()
         # makes a thread for the passed worker class
@@ -5925,17 +5990,27 @@ class SuperController(QObject):
 
     def predictionWorkerStop(self):
         """Function to stop the prediction worker thread/class"""
-        if hasattr(self, "predictWorker") and self.predictWorker:
+        if getattr(self, "predictWorker", None):
         # if the worker exists and is defined
-            self.predictWorker.stopSignal.emit()
-            # sends a signal telling the worker to stop
-        
-        if hasattr(self, "predictThread") and self.predictThread:
+            try:
+            # tries (this crashes annoyingly frequently otherwise)
+                self.predictWorker.stopSignal.emit()
+                # sends a signal telling the worker to stop
+            except:
+            # if it can't send the signal
+                pass 
+                # it doesn't actually exist, it just hallucinates
+            self.predictWorker = None
+            # reassigns as None
+
+        if getattr(self, "predictThread", None):
         # if the thread exists and is defined
             self.predictThread.quit()
             # calls for the thread to quit (stop)
             self.predictThread.wait()
             # waits for the thread to stop
+            self.predictThread = None
+            # reassigns as None
 
 
 
@@ -5956,17 +6031,27 @@ class SuperController(QObject):
 
     def detailsWorkerStop(self):
         """Function to stop the details worker thread/class"""
-        if hasattr(self, "detailsWorker") and self.detailsWorker:
+        if getattr(self, "detailsWorker"):
         # if the worker exists and is defined
-            self.detailsWorker.stopSignal.emit()
-            # sends a signal telling the worker to stop
-        
-        if hasattr(self, "detailsThread") and self.detailsThread:
+            try:
+            # tries (this crashes annoyingly frequently otherwise)
+                self.detailsWorker.stopSignal.emit()
+                # sends a signal telling the worker to stop
+            except:
+            # if it can't send the signal
+                pass 
+                # it doesn't actually exist, it just hallucinates
+            self.detailsWorker = None
+            # reassigns as None
+
+        if getattr(self, "detailsThread", None):
         # if the thread exists and is defined
             self.detailsThread.quit()
             # calls for the thread to quit (stop)
             self.detailsThread.wait()
             # waits for the thread to stop
+            self.detailsThread = None
+            # reassigns as None
         self.detailsWindowBool = False
         # swaps the boolean to False to allow a new window creation
 
@@ -5991,8 +6076,17 @@ class SuperController(QObject):
         """Function to stop the help worker thread/class"""
         if hasattr(self, "helpWorker") and self.helpWorker:
         # if the worker exists and is defined
-            self.helpWorker.stopSignal.emit()
-            # sends a signal telling the worker to stop
+            try:
+            # tries (this crashes annoyingly frequently otherwise)
+                self.helpWorker.stopSignal.emit()
+                # sends a signal telling the worker to stop
+            except:
+            # if it can't send the signal
+                pass 
+                # it doesn't actually exist, it just hallucinates
+            self.helpWorker = None
+            # reassigns as None
+
         
         if hasattr(self, "detailsThread") and self.helpThread:
         # if the thread exists and is defined
@@ -6000,6 +6094,8 @@ class SuperController(QObject):
             # calls for the thread to quit (stop)
             self.helpThread.wait()
             # waits for the thread to stop
+            self.helpWorker = None
+            # reassigns as None
         self.helpWindowBool = False
         # swaps the boolean to False to allow a new window creation
 
@@ -6022,17 +6118,27 @@ class SuperController(QObject):
 
     def historyWorkerStop(self):
         """Function to stop the help worker thread/class"""
-        if hasattr(self, "historyWorker") and self.historyWorker:
+        if getattr(self, "historyWorker", None):
         # if the worker exists and is defined
-            self.historyWorker.stopSignal.emit()
-            # sends a signal telling the worker to stop
-        
-        if hasattr(self, "historyThread") and self.historyThread:
+            try:
+            # tries (this crashes annoyingly frequently otherwise)
+                self.historyWorker.stopSignal.emit()
+                # sends a signal telling the worker to stop
+            except:
+            # if it can't send the signal
+                pass 
+                # it doesn't actually exist, it just hallucinates
+            self.historyWorker = None
+            # reassigns as None
+
+        if getattr(self, "historyThread", None):
         # if the thread exists and is defined
             self.historyThread.quit()
             # calls for the thread to quit (stop)
             self.historyThread.wait()
             # waits for the thread to stop
+            self.historyThread = None
+            # reassigns as None
         self.historyWindowBool = False
         # swaps the boolean to False to allow a new window creation
 
@@ -6128,8 +6234,18 @@ class SuperController(QObject):
             # channel has no listed predictions (never ran or ran too long ago)
                 truePrediction = False
                 # sets it to false
+
+            if len(activePrediction) > 0 and len(resolvedPredictions) > 0:
+            # if there's an open prediction and old predictions
+                truePrediction["resolvedPred"] = resolvedPredictions[0]
+                # adds the old prediction (in case the updates are too fast)
+            else:
+            # if that's not the case (no active or active + no resolved)
+                truePrediction["resolvedPred"] = False
+                # false boolean in the place of a prediction dictionary
             
             if truePrediction:
+            # if there's a prediction of any type
                 title = truePrediction["title"]
                 # grabs the prediction title
                 outcomes = truePrediction["outcomes"]
@@ -6202,14 +6318,16 @@ class SuperController(QObject):
                     "votedOutcome": votedOutcome,
                     "votedSum": votedSum,
                     "sumWon": sumWon,
-                    "pointsName": pointsName
+                    "pointsName": pointsName,
+                    "oldPred": truePrediction["resolvedPred"]
                 }
                 # forms a dictionary with easier-to-access data than the full thing (reduces work for UI)
 
             else:
             # no prediction data
                 finalPrediction = {
-                    "success": False
+                    "success": False,
+                    "error": "No data!"
                 }
                 # fail dictionary
 
@@ -6218,7 +6336,7 @@ class SuperController(QObject):
 
         else:
         # if it was not a success
-            self.newPData.emit({"success": False})
+            self.newPData.emit({"success": False, "error": prediction["error"]})
             # sends a dictionary with fail state
 
 
@@ -6227,6 +6345,7 @@ class SuperController(QObject):
 
     def windowSwap(self, window: str):
         """Function to swap active window"""
+
         if window == "Starter":
         # calls for starter window to be visible (start -> main -> start)
             self.startWindow.returner()
@@ -6237,8 +6356,10 @@ class SuperController(QObject):
             # hides the main window
         else:
         # not starter (main -> start -> main)
+            self.mainWindow.uiStyle(window)
+            # calls the main window with the passed window type
             self.mainWindow.show()
-            # re-shows the main window
+            # shows the main window
             self.startWindow.hide()
             # hides the starter window
 
@@ -6255,15 +6376,18 @@ class SuperController(QObject):
 
     def startDetailView(self):
         """Function to open the prediction details view"""
-        if self.detailsWindowBool:
+        self.taskChange.emit("Details view is not yet implemented")
+        # temp user inform
+
+        #if self.detailsWindowBool:
         # if the boolean is already set to True
-            self.taskChange.emit("Details view is already active!")
+            #self.taskChange.emit("Details view is already active!")
             # user inform
-        else:
+        #else:
         # boolean isn't True (yet)
-            self.detailsWorkerStart()
-            # calls the details worker to start
-            self.detailsWindowBool = True
+            #self.detailsWorkerStart()
+            #calls the details worker to start
+            #self.detailsWindowBool = True
             # sets the boolean to True to prevent a new window start
         
 ### History View ###
@@ -6300,6 +6424,19 @@ class SuperController(QObject):
             # calls the help worker to start
             self.helpWindowBool = True
             # sets the boolean to True to prevent a new window start
+
+
+
+
+
+### Ditch JavaScript Errors ###
+
+class SilentWebPage(QWebEnginePage):
+    """A class to bypass JS errors (that keep spamming console)"""
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
+        """Function that catches JS messages/errors"""
+        pass
+        # does nothing with them
 
 
 

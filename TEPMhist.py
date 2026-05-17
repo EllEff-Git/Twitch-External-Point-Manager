@@ -8,6 +8,7 @@ import pandas as Pandas
 # Required for dataframe construction from JSON
 import matplotlib.dates as MDates
 from matplotlib.ticker import StrMethodFormatter
+import matplotlib.pyplot as Plot
 # Required for chart visuals
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -19,6 +20,9 @@ directory = None
 """The base directory of the program, where TEPMhist.exe resides"""
 iconPath = None
 """The path of the app icon png"""
+
+Plot.rcParams["font.family"] = ["Segoe UI Emoji", "DejaVu Sans"]
+# updates the plotting parameters to use a different font (since a lot of predictions use emoji, which aren't supported by the default font)
 
 
 
@@ -57,7 +61,7 @@ class asyncHistWindow(QMainWindow):
         self.localTZ = datetime.datetime.now().astimezone().tzinfo
         # gets local timezone
 
-        self.activeChart = 0
+        self.activeChart = 1
         """Active chart state, used to track which chart is visible"""
         self.currentChannel = None
         """The current channel selected for the PPC chart"""
@@ -67,6 +71,10 @@ class asyncHistWindow(QMainWindow):
         """A map of channels with their case-insensitive spellings"""
         self.channelPointMap = {}
         """A map of channels with their points and point save times"""
+        self.chartViewDots = 25
+        """How many chart data points (dots) are visible at once"""
+        self.chartView = 0
+        """What index of chart view the current view is on (starts at 0)"""
 
         self.running = True
         # runs
@@ -77,15 +85,8 @@ class asyncHistWindow(QMainWindow):
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-        self.setMinimumSize(QSize(1200, 925))
+        self.setMinimumSize(QSize(1300, 925))
         # the window size
-
-    ### Shift Modifier ###
-
-        self.modifiers = QApplication.keyboardModifiers()
-        # gets keyboard modifiers
-        self.reverseSwap = self.modifiers & Qt.KeyboardModifier.ShiftModifier
-        # reverses chart swapping if Shift is held down when pressing
 
     ### UI Elements ###
 
@@ -117,7 +118,7 @@ class asyncHistWindow(QMainWindow):
         """)
         # status label
         self.mainLayout.addWidget(self.statusLabel, 0, 1, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to layout, top center (spans both columns)
+        # adds to layout, top center (spans both middle columns)
 
     ### Swap Button ###
 
@@ -125,12 +126,36 @@ class asyncHistWindow(QMainWindow):
         # a button to swap between the charts
         self.swapButton.setToolTip("Swap the active chart between points and W/L stats\nHold Shift while clicking to go back")
         # tooltip
-        self.swapButton.clicked.connect(self.chartSwapper)
+        self.swapButton.clicked.connect(lambda: self.chartSwapper("Swap"))
         # connects the button to the function
         self.swapButton.setMinimumSize(150, 40)
         # min size
-        self.mainLayout.addWidget(self.swapButton, 2, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.mainLayout.addWidget(self.swapButton, 3, 1, alignment=Qt.AlignmentFlag.AlignRight)
         # adds to layout (bottom row, left side)
+
+    ### Left / Right Buttons ###
+
+        self.leftButton = QPushButton("<")
+        # a button to flip the active chart to the left
+        self.leftButton.setToolTip("Move the chart view to the left")
+        # tooltip
+        self.leftButton.setFixedSize(20, 50)
+        # sets button size
+        self.leftButton.clicked.connect(lambda: self.chartMover(-1))
+        # connects the left button to the moving function with -1 (<-)
+
+        self.rightButton = QPushButton(">")
+        # a button to flip the active chart to the right
+        self.rightButton.setToolTip("Move the chart view to the right")
+        # tooltip
+        self.rightButton.setFixedSize(20, 50)
+        # sets button size
+        self.rightButton.clicked.connect(lambda: self.chartMover(1))
+        # connects the left button to the moving function with +1 (->)
+
+        self.mainLayout.addWidget(self.leftButton, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addWidget(self.rightButton, 2, 3, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the buttons to the layout
 
     ### Current Channel ###
 
@@ -144,7 +169,7 @@ class asyncHistWindow(QMainWindow):
         # aligns the text inside to center
         self.currentChannelLine.setMinimumSize(150, 40)
         # min size
-        self.mainLayout.addWidget(self.currentChannelLine, 2, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.mainLayout.addWidget(self.currentChannelLine, 3, 2, alignment=Qt.AlignmentFlag.AlignLeft)
         # adds to layout (bottom row, right side)
 
         self.channelModel = QStringListModel()
@@ -160,10 +185,9 @@ class asyncHistWindow(QMainWindow):
         self.currentChannelLine.returnPressed.connect(lambda: self.channelToPPC(self.currentChannelLine.text().strip()))
         # connects pressing enter (return) to the points per channel pre-chart function, passes the current channel
 
-
     ### Figure / Canvas ###
 
-        self.chartFigure = Figure(figsize=(17, 8))
+        self.chartFigure = Figure(figsize=(19, 8))
         # the figure (width, height)
 
         self.chartCanvas = FigureCanvas(self.chartFigure)
@@ -174,12 +198,12 @@ class asyncHistWindow(QMainWindow):
         )
         # allows the chart to expand if it has space
 
-        self.mainLayout.addWidget(self.chartCanvas, 1, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.mainLayout.addWidget(self.chartCanvas, 2, 1, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the canvas to the layout (between the status and swap button/channel select)
 
         self.mainLayout.setRowStretch(1, 1)
-        self.mainLayout.setColumnStretch(0, 1)
         self.mainLayout.setColumnStretch(1, 1)
+        self.mainLayout.setColumnStretch(2, 1)
         # allows the row and columns the chart sits in to stretch
 
     ### Startup ###
@@ -235,7 +259,7 @@ class asyncHistWindow(QMainWindow):
         ])
         # goes through the data dictionary, grabs the entry values for each prediction event (last 3 can be empty, if no vote was entered)
 
-        self.historyDataFrame["timestamp"] = Pandas.to_datetime(self.historyDataFrame["timestamp"])
+        self.historyDataFrame["timestamp"] = Pandas.to_datetime(self.historyDataFrame["timestamp"], utc=True)
         # refactors all the timestamps to actual datetime objects (so they can be detected as such)
         self.historyDataFrame["plotStamp"] = (self.historyDataFrame["timestamp"].dt.tz_convert(self.localTZ).dt.tz_localize(None))
         # stores a second timestamp entry with local timezone applied and removes local tag
@@ -300,6 +324,10 @@ class asyncHistWindow(QMainWindow):
         ax.set_facecolor("#1E1E1E")
         # sets the background color for the axes
 
+        startDots = self.chartView
+        endDots = (self.chartView + self.chartViewDots)
+        # calculates the new start and end points 
+
         if self.pointGains.empty:
         # if the gain entries don't exist (no data)
             ax.text(0.5, 0.5, "No valid point gain data", color="white", ha="center", va="center", fontsize=14)
@@ -308,25 +336,42 @@ class asyncHistWindow(QMainWindow):
             # disables the X and Y axis grids
         else:
         # if data exists
-            colors = ["#00751F" if gain >= 0 else "#630700" for gain in self.pointGains["gain"]]
+            pointData = self.chartDotsCount(self.pointGains)
+            # calls the chart dot counter to tell the chart what data points to select
+
+            colors = ["#00751F" if gain >= 0 else "#630700" for gain in pointData["gain"]]
             # selects colors (green if the gain is positive, red if negative)
-            self.pointGains.plot(kind="bar", y="gain", x="title", ax=ax, legend=False, color=colors)
+
+            pointData.plot(kind="bar", y="gain", x="title", ax=ax, legend=False, color=colors)
             # makes a bar chart with gain in Y-axis and the prediction titles in X-axis (hides legend)
 
-            ax.tick_params(axis="x", colors="white", rotation=45)
-            # sets the X-axis ticks/text to white and rotates them 45deg
+            ax.tick_params(axis="x", colors="white", rotation=15)
+            # sets the X-axis ticks/text to white and slants them at 15deg
             ax.tick_params(axis="y", colors="white")
             # sets the Y-axis ticks/text to white
+
+            ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
+            # formats the Y-axis points to use thousand-separation (1,000)
+            ax.tick_params(axis="y", colors="white")
+            # makes the Y-axis ticks white
+
+            ax.set_ylabel("Points Trend", color="white")
+            # sets the Y-axis label
+            ax.set_xlabel("Prediction", color="white")
+            # sets the X-axis label
+
+            for xPoint, yPoint in enumerate(pointData["gain"]):
+            # goes through every gain data point
+                pointOffset = 14 if yPoint >= 0 else -13
+                # offsets the points on the bars by +14 if the gain's positive, -13 if the gain is negative
+                ax.annotate(f"{yPoint:,.0f}", xy=(xPoint, yPoint), xytext=(0, pointOffset), textcoords=("offset points"), color="white", fontsize=10, ha="center", va="top")
+                # adds a little vertical offset to the points, formats them into thousand-separated values (1,000)
 
             ax.grid(True, color="gray", linestyle="--", alpha=0.3)
             # adds a semi-transparent grid
 
-        ax.set_title("Historical Point Trend", color="white")
+        ax.set_title(f"Points Gained/Lost via Predictions (across all channels)\n(Data: {startDots} -> {endDots})", color="white")
         # sets the chart title
-        ax.set_ylabel("Points Gained/Lost via Predictions (across all channels)", color="white")
-        # sets the Y-axis label
-        ax.set_xlabel("Prediction", color="white")
-        # sets the X-axis label
 
         self.chartCanvas.draw()
         # draws the canvas
@@ -356,9 +401,13 @@ class asyncHistWindow(QMainWindow):
         # if the data exists
             wlCount = self.winLoss["W/L"].value_counts()
             # gets to total Win/Loss value counts (how many of each there are)
-            colors = ["#00751F", "#630700"]
-            # Win / Loss colors
-            ax.pie(wlCount, labels=wlCount.index, autopct="%1.1f%%", colors=colors, startangle=90, textprops={"color":"white"})
+            totalWL = wlCount.sum()
+            # adds up the wins and losses for the total
+            colors = ["#00751F" if state == "Win" else "#630700" for state in wlCount.index]
+            # selects colors (green if the state is a win, red if loss)
+            ax.pie(wlCount, labels=wlCount.index, 
+                   autopct=lambda pct: f"{int(round(pct / 100 * totalWL))} ({pct:.1f}%)", 
+                   colors=colors, startangle=90, textprops={"color":"white"})
             # makes a pie chart with the Win/Loss counts, using the Win and Loss as labels, adds the percentage of each with ".1f" (1 decimal) accuracy
 
         ax.set_title("Prediction Win / Loss History", color="white")
@@ -398,6 +447,9 @@ class asyncHistWindow(QMainWindow):
         self.currentChannelLine.setText("")
         # clears the channel entry text
 
+        self.currentChannel = caseChannel
+        # sets the points per channel channel
+
         self.chartFigure.clear()
         # clears the existing figure
         self.chartFigure.patch.set_facecolor("#1E1E1E")
@@ -413,24 +465,27 @@ class asyncHistWindow(QMainWindow):
         channelPoints = self.channelPointMap[caseChannel]["points"]
         # gets the list of points/balance for the channel
 
-        ax.plot(channelTimestamps, channelPoints, marker="o", color="#00687A", linewidth=2)
+        plotStartDot = self.chartView
+        # gets the current start point for the chart
+        plotEndDot = (self.chartView + self.chartViewDots)
+        # calculates the end point
+
+        ax.plot(channelTimestamps[plotStartDot:plotEndDot], channelPoints[plotStartDot:plotEndDot], marker="o", color="#00687A", linewidth=2)
         # plots the chart with the timestamps and points
         
-        for xPoint, yPoint in zip(channelTimestamps, channelPoints):
+        for xPoint, yPoint in zip(channelTimestamps[plotStartDot:plotEndDot], channelPoints[plotStartDot:plotEndDot]):
         # goes through every X and Y axis data point
-            ax.annotate(f"{yPoint:,.0f}", xy=(xPoint, yPoint), xytext=(0, 16), textcoords=("offset points"), color="white", fontsize=9, ha="center", va="top")
+            ax.annotate(f"{yPoint:,.0f}", xy=(xPoint, yPoint), xytext=(0, 16), textcoords=("offset points"), color="white", fontsize=10, ha="center", va="top")
             # adds a little vertical offset to the points, formats them into thousand-separated values (1,000)
 
-        ax.set_title(f"Points over time for {caseChannel}", color="white")
+        ax.set_title(f"Points over time for {caseChannel}\nUse the channel swapping here!\n(Data: {plotStartDot} -> {plotEndDot})", color="white")
         # sets title
-        ax.set_xlabel("Time", color="white")
-        # adds X-axis label
         ax.set_ylabel("Points", color="white")
         # adds Y-axis label
 
         ax.xaxis.set_major_formatter(MDates.DateFormatter("%b %d %H:%M"))
         # formats the X-axis timestamps to human readable format (Month XX HH:MM)
-        ax.tick_params(axis="x", rotation=45, colors="white")
+        ax.tick_params(axis="x", rotation=15, colors="white")
         # makes the X-axis ticks slanted and white
 
         ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
@@ -448,20 +503,29 @@ class asyncHistWindow(QMainWindow):
 
 ### Swap Charts ###
 
-    def chartSwapper(self):
+    def chartSwapper(self, action:str):
         """Function to swap between charts"""
 
-        if self.reverseSwap:
-        # if shift is held
-            self.activeChart -= 1
-            # removes 1 from the active
-        else:
-        # if shift isn't held
-            self.activeChart += 1
-            # adds 1 instead
+        self.modifiers = QApplication.keyboardModifiers()
+        # gets keyboard modifiers
+        self.reverseSwap = self.modifiers & Qt.KeyboardModifier.ShiftModifier
+        # reverses chart swapping if Shift is held down when pressing
 
-        self.activeChart %= 3
-        # wraps back to 0 if it hits 3
+        if action == "Swap":
+        # actual swap, not just re-calling draw
+            if self.reverseSwap:
+            # if shift is held
+                self.activeChart -= 1
+                # removes 1 from the active
+            else:
+            # if shift isn't held
+                self.activeChart += 1
+                # adds 1 instead
+
+            self.activeChart %= 3
+            # wraps back to 0 if it hits 3
+            self.chartView = 0
+            # resets the chart view to 0
 
         if self.activeChart == 0:
         # if the active chart is 0
@@ -477,6 +541,34 @@ class asyncHistWindow(QMainWindow):
         # if the active chart is 2
             self.pointsPerChannel(self.currentChannel)
             # calls the points per channel charter with the active channel
+
+
+
+### Chart Dots Counter ###
+
+    def chartDotsCount(self, dataFrame: Pandas.DataFrame):
+        """Function to calculate the pages available for a given dataframe"""
+  
+        chartEndPoint = self.chartView + self.chartViewDots
+        # adds up the current view position and the total dots per page to get where the view should end
+        return dataFrame.iloc[self.chartView:chartEndPoint]
+        # returns the position the dataframe should display data to
+
+
+
+### Chart Moving L -> R -> ###
+
+    def chartMover(self, direction: int):
+        """Function to move the chart(s) left to right to display more data"""
+
+        newChartView = self.chartView + (direction * self.chartViewDots)
+        # gets the new view dots position (eg. view = 0 -> 0 + (1 * 25) = 25)
+        maxChartView = max(0, len(self.pointGains) - self.chartViewDots)
+        # gets the max starting point (doesn't let it go below 0)
+        self.chartView = max(0, min(newChartView, maxChartView))
+        # sets the new starting point (caps it between 0 and the max dots (25))
+        self.chartSwapper("A")
+        # refreshes charts (bypasses the swapping)
 
 
 
