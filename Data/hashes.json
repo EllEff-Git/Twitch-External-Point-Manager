@@ -29,5 +29,8 @@
     "Prediction Delete Hash": "35d375614e426624456ee7be4a2e0fbc0a410c0a91c21f6044cb3cd5c38c4e4d",
     "Prediction Lock Operation": "LockPrediction",
     "Prediction Lock Version": 1,
-    "Prediction Lock Hash": "1f2b1eb44af35f055308e78ffbe81c2f958408f9b32d076a759a84ab213285d4"
+    "Prediction Lock Hash": "1f2b1eb44af35f055308e78ffbe81c2f958408f9b32d076a759a84ab213285d4",
+    "Live Status Operation": "UseLive",
+    "Live Status Version": 1,
+    "Live Status Hash": "639d5f11bfb8bf3053b424d9ef650d04c4ebb7d94711d644afb08fe9a0fad5d9"
 }

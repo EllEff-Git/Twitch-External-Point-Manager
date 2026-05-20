@@ -250,7 +250,9 @@ class asyncHistWindow(QMainWindow):
                 "title": entry.get("title"),
                 "timestamp": entry.get("timestamp"),
                 "winner": entry.get("winner"),
+                # winning outcome (ID, if grabbing from history)
                 "balance": entry.get("balance"),
+                # balance at the time of payout ("ignore", if it's grabbed from history)
                 "bet": entry.get("bet", None),
                 "gain": entry.get("gain", None),
                 "W/L": entry.get("W/L", None)
@@ -264,6 +266,9 @@ class asyncHistWindow(QMainWindow):
         self.historyDataFrame["plotStamp"] = (self.historyDataFrame["timestamp"].dt.tz_convert(self.localTZ).dt.tz_localize(None))
         # stores a second timestamp entry with local timezone applied and removes local tag
 
+        self.historyDataFrame.loc[self.historyDataFrame["balance"] == "ignore", "balance"] = None
+        # drops (sets to None) every balance entry that says "ignore" (history grabs, shouldn't affect balance line charts)
+
         self.winLoss = self.historyDataFrame[self.historyDataFrame["W/L"].isin(["Win", "Loss"])]
         # only stores the W/L values if the values are either Win or Loss
 
@@ -271,7 +276,7 @@ class asyncHistWindow(QMainWindow):
         # drops the entries where "gain" isn't present (user didn't vote)
 
         self.channelsPoints = self.historyDataFrame.dropna(subset=["balance"])
-        # drops the entries where "balance" isn't present (shouldn't drop anything)
+        # drops the entries where "balance" isn't present (ignores ignored balance points)
 
         self.storedChannels = self.historyDataFrame["channel"].dropna().unique().tolist()
         # takes *all* stored channels in the json, drops empty values, only takes uniques -> forms a list
@@ -406,7 +411,8 @@ class asyncHistWindow(QMainWindow):
             colors = ["#00751F" if state == "Win" else "#630700" for state in wlCount.index]
             # selects colors (green if the state is a win, red if loss)
             ax.pie(wlCount, labels=wlCount.index, 
-                   autopct=lambda pct: f"{int(round(pct / 100 * totalWL))} ({pct:.1f}%)", 
+                   autopct=lambda percent: f"{int(round(percent / 100 * totalWL))}\n({percent:.1f}%)",
+                   # forms the labels to display inside the pie chart (X \n Y%)
                    colors=colors, startangle=90, textprops={"color":"white"})
             # makes a pie chart with the Win/Loss counts, using the Win and Loss as labels, adds the percentage of each with ".1f" (1 decimal) accuracy
 
