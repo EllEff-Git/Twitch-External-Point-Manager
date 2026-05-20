@@ -85,6 +85,7 @@ class asyncHelpWindow(QMainWindow):
                             "Set default bet: Ctrl+D\n"
                             "Halve current bet: Ctrl+H\n"
                             "Clear bet field: Ctrl+Y (ensure everything is deselected with Escape\n"
+                            "Select an outcome: Ctrl+num (any number 1-9 = outcomes 1-9, 0 = outcome 10)\n"
                             "Save own predictions: Ctrl+S\n"
                             "Cycle to previous stream: Ctrl+< (Ctrl+Shift+,)\n"
                             "Cycle to next stream: Ctrl+> (Ctrl+Shift+.)\n\n"
