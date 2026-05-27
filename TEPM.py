@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.20.0712"
+tepmVer = "0.5.27.0423"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -20,10 +20,6 @@ directory = None
 """The base directory of the program, where TEPM.exe resides"""
 iconPath = None
 """The path of the app icon png"""
-liveStatusPath = None
-"""The live status icon path"""
-offlineStatusPath = None
-"""The offline live status icon path"""
 
 
 
@@ -31,15 +27,11 @@ if getattr(sys, "frozen", False):
 # since the program bundled with pyInstaller, it's "frozen"
     directory = os.path.dirname(sys.executable)
     iconPath = os.path.join(sys._MEIPASS, "tepmIcon.png")
-    liveStatusPath = os.path.join(sys._MEIPASS, "liveStatus.png")
-    offlineStatusPath = os.path.join(sys._MEIPASS, "liveStatusOff.png")
     # reassigns the path variables accordingly
 else:
 # if somehow not in a bundled (frozen) state
     directory = os.path.dirname(__file__)
     iconPath = os.path.join(directory, "icons", "tepmIcon.png")
-    liveStatusPath = os.path.join(directory, "icons", "liveStatus.png")
-    offlineStatusPath = os.path.join(directory, "icons", "liveStatusOff.png")
     # reassigns the path variables accordingly
 
 
@@ -87,6 +79,12 @@ defaultBet = 0
 """The default points to set with default button"""
 roundBalanceBet = False
 """The boolean for using default bet as a rounding guide"""
+stageBet = 0
+"""The points to set with staged bet (default button)"""
+stageBetBalance = 0
+"""The points required to set stage bet over default bet"""
+stageBetBoolean = False
+"""The boolean for staging bets rather than just having one default"""
 streakMap = {}
 """The map that holds all the streak list information"""
 hashMap = {}
@@ -247,8 +245,8 @@ class StarterWindow(QWidget):
         # tooltip
         self.optionsButton.setMinimumSize(100, 50)
         # sets size
-        self.optionsButton.clicked.connect(lambda: self.mainStack.setCurrentWidget(self.configPage))
-        # connects the options button to display the options page
+        self.optionsButton.clicked.connect(lambda: self.configWindow("reload"))
+        # connects the options button to reload the config -> show the config
         self.optionsButton.setEnabled(False)
         # disabled by default
 
@@ -310,11 +308,13 @@ class StarterWindow(QWidget):
         # the config page prompt
         self.configTaskText.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # aligns text to center
-        self.configLayout.addWidget(self.configTaskText, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to top of config page
+        self.configLayout.addWidget(self.configTaskText, 0, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to top of config page (spans across both columns)
 
         self.defaultBetMask = QIntValidator(0, 250000)
         """A validator for the default bet"""
+        self.stageBalanceMask = QIntValidator(0, 500000000)
+        """A validator for the staged balance minimum (max of 50 million because that's just how it is)"""
         
         self.autoAddStreaksCheckbox = QCheckBox("Auto-add streaks")
         """Checkbox for automatically adding streaks"""
@@ -362,41 +362,82 @@ class StarterWindow(QWidget):
         self.roundBalanceBetText.setToolTip("Uses the default bet as a 'rounding guide' instead")
         # tooltip
 
-        self.autoAddStreakText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self.autoRemoveStreaksText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self.enableCSVErrorsText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self.defaultBetText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        self.roundBalanceBetText.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        # centers all text fields to the top of their slots
+        self.stagedBalanceBetCheckbox = QCheckBox("Staged balance rounding")
+        """Checkbox to enable staged balance rounding"""
+        self.stagedBalanceBetText = QLabel("Whether to stage the balance rounding based on balance")
+        """Text helper for staged balance rounding"""
+        self.stagedBalanceBetText.setToolTip("If enabled, uses a staged system to determine bet size\n"
+                                            "The default bet will act as the lower stage bet, and the below fields will determine the upper stage bet\n"
+                                            "Eg. setting the upper stage bet to 10,000 at 250,000 means if your balance for that channel is >= 250,000,\n"
+                                            "it'll use the staged bet amount to round the bet to 10,000, rather than the default bet (default of 5,000)")
+        # tooltip
+
+        self.stagedBetLine = QLineEdit()
+        """Line to edit the upper stage bet value"""
+        self.stagedBetLine.setValidator(self.defaultBetMask)
+        # sets a validator to only accept digits with a max bet of 250000
+        self.stagedBetLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.stagedBetLine.setPlaceholderText("10,000")
+        # background text
+        self.stagedBetText = QLabel("Higher stage bet size")
+        """Text helper for staged bet"""
+        self.stagedBetText.setToolTip("Bet to use when the balance is greater than or equal to the one defined below\n"
+                                    "There's technically no reason this needs to be greater than the default bet, but it's intended to work that way\n"
+                                    "If you do want to set smaller bets with a larger balance, you can set this lower than default bet to achieve that")
+        # tooltip
+        
+        self.stagedBetBalanceLine = QLineEdit()
+        """Line to edit the upper stage bet balance requirement"""
+        self.stagedBetBalanceLine.setValidator(self.stageBalanceMask)
+        # sets a validator to only accept digits between 0 and 50 million
+        self.stagedBetBalanceLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.stagedBetBalanceLine.setPlaceholderText("250,000")
+        # background text
+        self.stagedBetBalanceText = QLabel("Staged bet balance minimum")
+        """Text helper for staged bet balance"""
+        self.stagedBetBalanceText.setToolTip("The balance required to use the staged bet\n"
+                                            "Eg. setting this to 500,000 means the channel must have >= 500,000 points to default to the larger staged bet\n"
+                                            "Otherwise, it'll use the smaller default bet")
+        # tooltip
 
         self.configLayout.addWidget(self.autoAddStreaksCheckbox, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.autoRemoveStreaksCheckbox, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 6, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.defaultBetLine, 8, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.roundBalanceBetCheckbox, 10, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the selector fields to layout
+        # adds the selector fields for points/streaks to the left of the layout
+        self.configLayout.addWidget(self.autoAddStreakText, 3, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.autoRemoveStreaksText, 5, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.enableCSVErrorsText, 7, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        # adds the points/streaks text fields to the left of the layout
 
-        self.configLayout.addWidget(self.autoAddStreakText, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.autoRemoveStreaksText, 5, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.enableCSVErrorsText, 7, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.defaultBetText, 9, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.configLayout.addWidget(self.roundBalanceBetText, 11, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the text widgets to layout
+        self.configLayout.addWidget(self.defaultBetLine, 2, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.roundBalanceBetCheckbox, 4, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.stagedBalanceBetCheckbox, 6, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.stagedBetLine, 8, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.stagedBetBalanceLine, 10, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the selector fields for predictions to the right of the layout
+        self.configLayout.addWidget(self.defaultBetText, 3, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.roundBalanceBetText, 5, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.stagedBalanceBetText, 7, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.stagedBetText, 9, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.stagedBetBalanceText, 11, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        # adds the prediction text fields to the right of the layout
 
         self.configPageTopSpacer = QSpacerItem(50, 25)
         # a spacer between the top text and the options
         self.configPageBottomSpacer = QSpacerItem(50, 25)
         # adds a layout spacer below the "save" button
 
-        self.configLayout.addItem(self.configPageTopSpacer, 1, 0)
-        self.configLayout.addItem(self.configPageBottomSpacer, 12, 0)
+        self.configLayout.addItem(self.configPageTopSpacer, 1, 0, 1, 1)
+        self.configLayout.addItem(self.configPageBottomSpacer, 12, 0, 1, 1)
         # adds the spacers to layout
 
         self.configPrepSaveButton = QPushButton("Save")
         # adds a button to save the config
         self.configPrepSaveButton.setFixedSize(100, 50)
         # sets size
-        self.configLayout.addWidget(self.configPrepSaveButton, 13, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.configPrepSaveButton, 13, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to layout
 
         self.configPrepSaveButton.clicked.connect(self.modifyConfigText)
@@ -875,9 +916,10 @@ class StarterWindow(QWidget):
 
 ### Configuration Window ###
 
-    def configWindow(self):
+    def configWindow(self, action:str=None):
         """Function to load the configuration window"""
         global streakMap, enableErrorLog, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
+        global stageBet, stageBetBalance, stageBetBoolean
         # global -> local
 
         self.labelSwap.emit("Reading config...")
@@ -900,13 +942,29 @@ class StarterWindow(QWidget):
                 # gets the integer for default bet
                 roundBalanceBet = streakMap.get("roundBalanceBet", False)
                 # gets the boolean for balance rounding for bets
+                stageBet = int(streakMap.get("stagedBet", 10000))
+                # gets the integer for staged bet
+                stageBetBalance = int(streakMap.get("stagedBalance", 250000))
+                # gets the integer for staged bet balance requirement
+                stageBetBoolean = streakMap.get("stagedBetBoolean", False)
+                # gets the boolean for whether or not to use the bet staging
 
                 self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
                 self.autoRemoveStreaksCheckbox.setChecked(autoRemoveStreaks)
                 self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
                 self.defaultBetLine.setText(f"{defaultBet}")
                 self.roundBalanceBetCheckbox.setChecked(roundBalanceBet)
-                # sets the check status based on the stored values
+                self.stagedBetLine.setText(f"{stageBet}")
+                self.stagedBetBalanceLine.setText(f"{stageBetBalance}")
+                self.stagedBalanceBetCheckbox.setChecked(stageBetBoolean)
+                # sets the field status' based on the config-stored values
+
+                if action == "reload":
+                # reload request
+                    self.mainStack.setCurrentWidget(self.configPage)
+                    # sets the config page visible (since this is activated via opening options)
+                    return
+                    # doesn't progress
         else:
         # if the file doesn't exist
             self.mainStack.setCurrentWidget(self.configPage)
@@ -934,25 +992,26 @@ class StarterWindow(QWidget):
 
         if self.optionReturn:
         # if user returns from options screen
-            QTimer.singleShot(200, self.modifyConfig)
+            QTimer.singleShot(250, self.modifyConfig)
             # calls modifyConfig faster
         else:
         # if it's the first time
             self.optionReturn = True
             # sets the boolean to True so it gets caught
-            QTimer.singleShot(800, self.modifyConfig)
+            QTimer.singleShot(750, self.modifyConfig)
             # calls modifyConfig slightly later
     
     def modifyConfig(self):
         """The function that actually modifies the config"""
         global enableErrorLog, streakMap, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
+        global stageBet, stageBetBalance, stageBetBoolean
         # global -> local
 
         streakMap["autoAddStreaks"] = self.autoAddStreaksCheckbox.isChecked()
         streakMap["autoRemoveStreaks"] = self.autoRemoveStreaksCheckbox.isChecked()
         streakMap["enableErrorsInCSV"] = self.enableCSVErrorsCheckbox.isChecked()
         streakMap["roundBalanceBet"] = self.roundBalanceBetCheckbox.isChecked()
-        streakMap["exampleChannel"] = "exampleChannelID"
+        streakMap["stagedBetBoolean"] = self.stagedBalanceBetCheckbox.isChecked()
         # adds map settings
 
         defaultBetRaw = self.defaultBetLine.text().strip()
@@ -961,7 +1020,7 @@ class StarterWindow(QWidget):
         # if it's empty or 0
             defaultBetRaw = 5000
             # overrides to default 5,000
-            defaultString = "Default bet not set, or set to 0 - using default: 5,000"
+            defaultString = "\nDefault bet not set, or set to 0 - using default: 5,000"
             # sets default bet string warning
         else:
             defaultString = ""
@@ -969,11 +1028,66 @@ class StarterWindow(QWidget):
         streakMap["defaultBet"] = defaultBetRaw 
         # saves to map
 
+        stageBetRaw = self.stagedBetLine.text().strip()
+        # grabs the staged bet size from the field
+        if stageBetRaw == "" or stageBetRaw == "0":
+        # if it's empty or 0
+            stageBetRaw = 10000
+            # overrides to default 10,000
+            if streakMap["stagedBetBoolean"]:
+            # if the staged bets are enabled in the first place
+                stageString = "\nStaged bet not set, or set to 0 - using default: 10,000"
+                # sets staged bet string warning
+            else:
+                stageString = ""
+                # empty string
+        else:
+            stageString = ""
+            # empty string
+        streakMap["stagedBet"] = stageBetRaw
+        # saves to map
+
+        stageBalanceRaw = self.stagedBetBalanceLine.text().strip()
+        # grabs the staged bet balance requirement from the field
+        if stageBalanceRaw == "" or stageBalanceRaw == "0":
+        # if it's empty or 0
+            stageBalanceRaw = 250000
+            # overrides to default 250,000
+            if streakMap["stagedBetBoolean"]:
+            # if the staged bets are enabled in the first place
+                balanceString = "\nStaged balance not set, or set to 0 - using default: 250,000"
+                # sets balance string warning
+            else:
+                balanceString = ""
+                # empty string
+        else:
+            balanceString = ""
+            # empty string
+
+        if int(stageBalanceRaw) < int(stageBetRaw):
+        # additional check to ensure the stage bet is valid (must be > than the balance required)
+            stageBalanceRaw = (int(stageBetRaw) * 2)
+            # overrides to double the stage bet, to ensure it's valid
+            if streakMap["stagedBetBoolean"]:
+            # if the staged bets are enabled in the first place
+                balanceString = f"\nStaged balance set smaller than staged bet - using doubled: {stageBalanceRaw:,.0f}"
+                # sets balance string warning
+            else:
+                balanceString = ""
+                # empty string
+        streakMap["stagedBalance"] = stageBalanceRaw
+        # saves to map
+        streakMap["exampleChannel"] = {"ID":"exampleChannelID", "Active": False}
+        # adds an examplechannelID
+
         autoAddStreaks = streakMap["autoAddStreaks"]
         autoRemoveStreaks = streakMap["autoRemoveStreaks"]
         enableErrorLog = streakMap["enableErrorsInCSV"]
         defaultBet = int(streakMap["defaultBet"])
         roundBalanceBet = streakMap["roundBalanceBet"]
+        stageBet = int(streakMap["stagedBet"])
+        stageBetBalance = int(streakMap["stagedBalance"])
+        stageBetBoolean = streakMap["stagedBetBoolean"]
         # sets the global variables based on the entry values
 
         with open(streakMapPath, "w") as strk:
@@ -981,8 +1095,8 @@ class StarterWindow(QWidget):
             json.dump(streakMap, strk, indent=3)
             # dumps the map into file
 
-        self.labelSwap.emit(f"Configuration modified\n{defaultString}")
-        # changes label, adds default bet warning if one is defined
+        self.labelSwap.emit(f"Configuration modified{defaultString}{stageString}{balanceString}")
+        # changes label, adds warnings where defined
         
         if self.optionReturn:
         # if the boolean is True (already returned once+)
@@ -990,7 +1104,7 @@ class StarterWindow(QWidget):
             # sets visible
         else:
         # boolean is False
-            QTimer.singleShot(1500, lambda: self.mainStack.setCurrentWidget(self.taskPage))
+            QTimer.singleShot(2000, lambda: self.mainStack.setCurrentWidget(self.taskPage))
             # runs the task chooser config slower (user can see prompt)
 
 
@@ -1286,14 +1400,11 @@ class tepmWindow(QWidget):
         """Map that stores previous prediction outcomes"""
         self.pastChannels = {}
         """Map that stores previously checked channels in prediction view"""
+        self.activeChannels = []
+        """A list of channels that have been 'visited' in the prediction view"""
 
         self.betValidator = QIntValidator(0, 250000)
         """Validator to use with the bet line to ensure it fits Twitch's rules"""
-
-        self.liveStatus = QIcon(liveStatusPath)
-        """Live status icon, live - red"""
-        self.offlineStatus = QIcon(offlineStatusPath)
-        """Live status icon, offline - grey"""
 
     ### Basic Window Setup ###
 
@@ -1529,8 +1640,8 @@ class tepmWindow(QWidget):
 
         self.predictChannelStatusLayout = QGridLayout()
         """A nested layout to hold the channel name, streak and status"""
-        self.predictChannelStatusLayout.setSpacing(0)
-        # removes spacing so the status indicator is close to the channel name
+        self.predictChannelStatusLayout.setSpacing(10)
+        # slight spacing to add gap between the channel and status labels
         self.predictInfoLayout.addLayout(self.predictChannelStatusLayout, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # very top center
 
@@ -1540,43 +1651,34 @@ class tepmWindow(QWidget):
 
         self.predictChannelLabel = QLabel(" ")
         """A label that holds the current channel name"""
-        self.predictChannelLabel.setToolTip("Currently selected channel (streak)")
+        self.predictChannelLabel.setToolTip("Currently selected channel")
         # tooltip
         self.predictChannelLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers text
         self.predictChannelLabel.setStyleSheet("""
             QLabel {
                 font-weight: bold;
-                font-size: 25px;
+                font-size: 28px;
             }
         """)
 
-        self.channelLiveStatus = QPushButton()
-        """A button to hold the status indicator (live/offline)"""
-        self.channelLiveStatus.setToolTip("Live status\nRed = live, Grey = offline")
+        self.predictChannelStatus = QLabel(" ")
+        """A label that holds the current channel's status (live, stream title, game, streak)"""
+        self.predictChannelStatus.setToolTip("Stream details/status (streak)")
         # tooltip
-        self.channelLiveStatus.setIcon(self.offlineStatus)
-        # defaults to offline
-        self.channelLiveStatus.setIconSize(QSize(16,16))
-        # forms the icon
-        self.channelLiveStatus.setStyleSheet("""
-            QPushButton {
-                padding-top: 4px;
-                border: none;
-                background: transparent;
+        self.predictChannelStatus.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers text
+        self.predictChannelStatus.setStyleSheet("""
+            QLabel {
+                font-style: italic;
+                font-size: 14px;
             }
         """)
-        # makes the button part invisible
-
-        self.predictChannelStatusLayout.setColumnStretch(0, 1)
-        self.predictChannelStatusLayout.setColumnStretch(1, 1)
-        self.predictChannelStatusLayout.setColumnStretch(2, 1)
-        # forces all 3 columns to stretch (so that the middle one is centered)
         
-        self.predictChannelStatusLayout.addWidget(self.predictChannelLabel, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds the channel name to the layout (left)
-        self.predictChannelStatusLayout.addWidget(self.channelLiveStatus, 0, 2, alignment=Qt.AlignmentFlag.AlignLeft)
-        # adds the status icon to the layout (right)
+        self.predictChannelStatusLayout.addWidget(self.predictChannelLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the channel name to the layout
+        self.predictChannelStatusLayout.addWidget(self.predictChannelStatus, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds the status to the layout (under the channel name)
 
 
 
@@ -1630,7 +1732,7 @@ class tepmWindow(QWidget):
         self.predictStatusLabel.setStyleSheet("""
             QLabel {
                 font-weight: bold;
-                font-size: 17px;
+                font-size: 20px;
             }
         """)
         # style sheet
@@ -1645,7 +1747,7 @@ class tepmWindow(QWidget):
             QLabel {
                 font-weight: bold;
                 font-style: italic;
-                font-size: 17px;
+                font-size: 16px;
             }
         """)
         # style sheet
@@ -1666,7 +1768,7 @@ class tepmWindow(QWidget):
         self.predictDetailLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
 
-        self.predictTimerLabel = QLabel("00:00")
+        self.predictTimerLabel = QLabel(" ")
         """A label that holds the prediction timer (if active)"""
         self.predictTimerLabel.setToolTip("Prediction timer")
         # tooltip
@@ -1686,7 +1788,7 @@ class tepmWindow(QWidget):
         self.predictPoolLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
         
-        self.predictResultLabel = QLabel("Prediction result")
+        self.predictResultLabel = QLabel("Loading prediction...")
         """A label that holds the result"""
         self.predictResultLabel.setToolTip("Prediction Outcome")
         # tooltip
@@ -2152,7 +2254,7 @@ class tepmWindow(QWidget):
         self.predictInfoLayout.addLayout(self.channelPointLayout, 6, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds to the higher up prediction layout
 
-        self.currentBetLabel = QLabel("Current Bet")
+        self.currentBetLabel = QLabel(" ")
         """A label that holds the current bet amount (total per channel)"""
         self.currentBetLabel.setToolTip("Total bet for this prediction in this channel")
         # tooltip
@@ -2279,6 +2381,11 @@ class tepmWindow(QWidget):
         self.halveBetShorcut = QShortcut(QKeySequence("Ctrl+H"), self)
         # forms a keybind for halving the current bet
         self.halveBetShorcut.activated.connect(lambda: self.betMasker("Halve"))
+        # connects the keybind to the bet masking function
+
+        self.quickBetShorcut = QShortcut(QKeySequence("Ctrl+Q"), self)
+        # forms a keybind for quick-betting default
+        self.quickBetShorcut.activated.connect(lambda: self.betMasker("Quick"))
         # connects the keybind to the bet masking function
 
         self.savePredictionShorcut = QShortcut(QKeySequence("Ctrl+S"), self)
@@ -2412,7 +2519,7 @@ class tepmWindow(QWidget):
         # connects the detail button to the details window
         self.helpButton.clicked.connect(lambda: ctrl.startHelpSignal.emit())
         # connects the help button to the help window
-        self.historyButton.clicked.connect(lambda: (self.savePredictions(True)))
+        self.historyButton.clicked.connect(lambda: (self.savePredictions("Start")))
         # connects the history button to the prediction save function and history window
     
 
@@ -2442,11 +2549,27 @@ class tepmWindow(QWidget):
         self.predictChannelSwapButton.setMinimumSize(80, 40)
         # min size
 
+        self.predictChannelLayout.addWidget(self.predictChannelLine, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictChannelLayout.addWidget(self.predictChannelSwapButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to layout (under the bets)
+
+        self.predictChannelSublayout = QGridLayout()
+        """A layout that holds the channel navigation elements (previous, remove, next)"""
+        self.predictSuperLayout.addLayout(self.predictChannelSublayout, 3, 1, alignment=Qt.AlignmentFlag.AlignLeft)
+        # adds the layout under the channel layout
+
         self.predictChannelPreviousButton = QPushButton("Previous")
         """Go back to previous stream (button)"""
         self.predictChannelPreviousButton.setToolTip("Return to previous stream")
         # tooltip
         self.predictChannelPreviousButton.setMinimumSize(80, 40)
+        # min size
+
+        self.predictChannelRemoveButton = QPushButton("Remove")
+        """Remove stream from list"""
+        self.predictChannelRemoveButton.setToolTip("Remove stream from navigation list")
+        # tooltip
+        self.predictChannelRemoveButton.setMinimumSize(80, 40)
         # min size
 
         self.predictChannelNextButton = QPushButton("Next")
@@ -2456,11 +2579,10 @@ class tepmWindow(QWidget):
         self.predictChannelNextButton.setMinimumSize(80, 40)
         # min size
 
-        self.predictChannelLayout.addWidget(self.predictChannelLine, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictChannelLayout.addWidget(self.predictChannelSwapButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictChannelLayout.addWidget(self.predictChannelPreviousButton, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.predictChannelLayout.addWidget(self.predictChannelNextButton, 0, 3, alignment=Qt.AlignmentFlag.AlignCenter)
-        # adds to layout (under the bets)
+        self.predictChannelSublayout.addWidget(self.predictChannelPreviousButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictChannelSublayout.addWidget(self.predictChannelRemoveButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.predictChannelSublayout.addWidget(self.predictChannelNextButton, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to layout (under the channel swap line)
 
         self.predictChannelPreviousShortcut = QShortcut(QKeySequence("Ctrl+<"), self)
         # adds a keybind to go to previous stream
@@ -2478,6 +2600,9 @@ class tepmWindow(QWidget):
         # connects the previous button to the UI swapping
         self.predictChannelPreviousShortcut.activated.connect(lambda: self.predictUI("Previous"))
         # connects the previous shortcut to the UI swapping
+
+        self.predictChannelRemoveButton.clicked.connect(lambda: self.predictUI("Remove"))
+        # connects the remove button to the UI swapping
 
         self.predictChannelNextButton.clicked.connect(lambda: self.predictUI("Next"))
         # connects the next button to the UI swapping
@@ -2532,19 +2657,20 @@ class tepmWindow(QWidget):
         """A list of point grab elements"""
 
         self.predictActionButtons = [self.maxBetButton, self.defaultBetButton, self.predictBetButton, 
-                                    self.predictChannelSwapButton, self.predictChannelPreviousButton, self.detailsButton, 
+                                    self.predictChannelSwapButton, self.detailsButton, 
                                     self.historyButton, self.modButton, self.helpButton, self.menuButton, self.exitButton, 
-                                    self.channelLiveStatus, self.predictChannelSwapButton, self.predictChannelPreviousButton]
+                                    self.predictChannelSwapButton, self.predictChannelPreviousButton,
+                                    self.predictChannelRemoveButton, self.predictChannelNextButton]
         """A list of prediction-view buttons"""
 
-        self.predictItems = [self.predictChannelLabel, self.predictStatusLabel, self.predictLastUpdateLabel,
+        self.predictItems = [self.predictChannelLabel, self.predictChannelStatus, self.predictStatusLabel, self.predictLastUpdateLabel,
                             self.predictInfoLabel, self.predictDetailLabel, self.predictTimerLabel,
                             self.predictPoolLabel, self.predictResultLabel, self.predictTaskLabel,
                             self.currentBetLabel, self.predictPointLabel, self.predictAmountLine, 
                             self.predictBetButton, self.maxBetButton, self.defaultBetButton, 
-                            self.modButton, self.detailsButton, self.helpButton, self.channelLiveStatus,
+                            self.modButton, self.detailsButton, self.helpButton,
                             self.historyButton, self.predictChannelLine, self.predictChannelSwapButton,
-                            self.predictChannelPreviousButton]
+                            self.predictChannelPreviousButton, self.predictChannelRemoveButton, self.predictChannelNextButton]
         """A list of prediction elements"""
 
     ### Prediction Button Policing ###
@@ -3003,6 +3129,10 @@ class tepmWindow(QWidget):
             # shows the starter window
             ctrl.stopPredictionWorker.emit()
             # calls the stopper to stop polling new prediction data
+            self.pastChannels.clear()
+            # clears the past channels (forces new data if re-opening prediction view)
+            self.activeChannels.clear()
+            # clears the active channels
             self.savePredictions()
             # saves when going to menu
         elif action == "Save":
@@ -3024,7 +3154,7 @@ class tepmWindow(QWidget):
 
 ### Save Prediction History ###
 
-    def savePredictions(self, start:bool = False):
+    def savePredictions(self, action:str = None):
         """Function to save the prediction history"""
 
         if os.path.exists(predictHistoryPath):
@@ -3046,13 +3176,17 @@ class tepmWindow(QWidget):
             json.dump(self.pastPredictions, nprdH, indent=3, default=str, ensure_ascii=False)
             # dumps the prediction history into file
 
-        self.predictionUserInform("Saved prediction history!")
-        # user inform
-
-        if start:
-        # if the start boolean is set to True
+        if action == "Start":
+        # if the action is set to Start (start the view)
             ctrl.startHistorySignal.emit()
             # sends signal to start the history view
+        elif action == "Init":
+        # initialisation action
+            pass
+            # doesn't do anything (no need to inform user of saved history)
+        else:
+            self.predictionUserInform("Saved prediction history!")
+            # user inform
         
 
 
@@ -3067,8 +3201,8 @@ class tepmWindow(QWidget):
         if action == "Predict":
         # prediction screen
 
-            self.setMinimumSize(950, 950)
-            self.resize(950, 950)
+            self.setMinimumSize(850, 990)
+            self.resize(850, 990)
             # the window size
 
             self.swapMainUI(action)
@@ -3115,8 +3249,11 @@ class tepmWindow(QWidget):
             self.stopLayout.addWidget(self.exitButton, 0, 1, alignment=Qt.AlignmentFlag.AlignLeft)
             # adds them to the stop layout (prediction UI)
 
-            self.savePredictions()
-            # calls the prediction save to get the current map of past predictions
+            self.savePredictions("Init")
+            # calls the prediction save to get the current map of past predictions (init to avoid user inform)
+
+            self.predictionUserInform(f"Grabbing prediction for {predictChannel}...")
+            # user inform text
 
             self.predictUI("Init")
             # calls the prediction UI to start
@@ -3148,38 +3285,87 @@ class tepmWindow(QWidget):
     def predictUI(self, action:str = None, channel:str = None):
         """Function that handles prediction UI changes"""
 
-        channels = list(self.pastChannels.keys())
-        # turns the map into a list of entries
-        if self.currentChannel and len(channels) > 0:
-        # if there's a set current channel and the channel list has something
-            try:
-                currentIndex = channels.index(self.currentChannel)
-                # gets the current channel's index (position)
-            except:
-                currentIndex = 0
+        for entry, entryDict in self.pastChannels.items():
+        # goes through the past channels map's entries and their stored dictionaries
+            if type(entryDict) == bool:
+            # if the entry is regarding swap
+                pass
+                # doesn't touch (can't .get() a boolean lol)
+            elif entryDict.get("active", False) and entry not in self.activeChannels:
+            # if the entry dictionary has an active flag, and the channel isn't in the list yet
+                self.activeChannels.append(entry)
+                # adds the channel to the list
+
+        if self.currentChannel:
+        # if there's a set current channel
+            if self.currentChannel in self.activeChannels:
+            # if the channel is present in the list of active channels
+                try:
+                    currentIndex = self.activeChannels.index(self.currentChannel)
+                    # gets the current channel's index (position)
+                except:
+                    currentIndex = 0
+                    # defaults to 0
+            else:
+            # if it's not present (been removed)
+                currentIndex = -1
+                # sets to negative 1 (this way it can go forward, but can't go back)
         else:
-        # if there's not (startup)
+        # if there's not a channel/the list is empty (startup)
             currentIndex = 0
             # sets index to 0
 
         if action == "Check":
         # check action (after swapping channel)
-            if currentIndex == (len(channels)-1):
+            if currentIndex == (len(self.activeChannels)-1):
             # if the index is max
                 self.predictChannelNextButton.setEnabled(False)
                 # disables the next button (nothing to go to)
+                self.predictChannelNextButton.setToolTip(f"Move to next stream (None)")
+                # sets tooltip with next next stream
             else:
             # not max index
                 self.predictChannelNextButton.setEnabled(True)
                 # enables the next button
-            if currentIndex == 0:
+                self.predictChannelNextButton.setToolTip(f"Move to next stream ({self.activeChannels[currentIndex + 1]})")
+                # sets tooltip with next next stream
+            if currentIndex == 0 or currentIndex == -1:
             # if the current index is 0 (first channel)
                 self.predictChannelPreviousButton.setEnabled(False)
                 # disables the previous button (nothing to go to)
+                self.predictChannelPreviousButton.setToolTip(f"Return to previous stream (None)")
+                # sets tooltip with previous stream
             else:
             # not 0 index
                 self.predictChannelPreviousButton.setEnabled(True)
                 # enables the previous button
+                self.predictChannelPreviousButton.setToolTip(f"Return to previous stream ({self.activeChannels[currentIndex - 1]})")
+                # sets tooltip with previous stream
+            if self.currentChannel in self.activeChannels:
+            # if the channel is in the active list
+                self.predictChannelRemoveButton.setEnabled(True)
+                # enables the remove button (since the channel is now enabled)
+            else:
+            # not in the list (already removed)
+                self.predictChannelRemoveButton.setEnabled(False)
+                # disables the remove button
+
+        elif action == "Remove":
+        # remove action (from nav list)
+            tempChannel = self.currentChannel
+            # stores a temp copy of the channel (because currentChannel gets reset)
+            if self.currentChannel in self.pastChannels:
+            # if the channel is entered (non-existent channels or predictionless ones, for example, do not)
+                self.pastChannels[self.currentChannel]["active"] = False
+                # effectively removes the current channel from the map
+                self.activeChannels.remove(self.currentChannel)
+                # removes the channel from active list
+                self.currentChannel = None
+                # resets current channel, so that predictUpdateUI sets it again, forcing a UI check right after
+            self.predictionUserInform(f"Removed {tempChannel} from navigation list")
+            # user inform
+            self.predictChannelRemoveButton.setEnabled(False)
+            # disables the button until stream is swapped
 
         elif action == "Init":
         # init action
@@ -3193,8 +3379,6 @@ class tepmWindow(QWidget):
             # calls "end of program" to show menu and exit buttons
             ctrl.predictionTimerOverride.emit()
             # sends a signal to skip the initial 15 second wait to get first data right away
-            self.currentChannel = predictChannel
-            # grabs the current channel from the global variable 
             
         elif action == "Swap":
         # if user pressed swap button
@@ -3211,14 +3395,16 @@ class tepmWindow(QWidget):
                 # sends a signal to indicate a new channel
                 self.predictChannelLine.setText("")
                 # clears the text entry field
+                self.pastChannels["swap"] = True
+                # sets the boolean in the pastChannels map to True, telling predictUpdateUI to reset channel info
 
         elif action == "Previous" or action == "Next":
         # if user pressed previous button
             if action == "Previous":
             # action is Previous
                 if currentIndex > 0:
-                # if the index isn't 0 (first one)
-                    newChannel = channels[currentIndex - 1]
+                # if the index isn't 0/-1 (first one)
+                    newChannel = self.activeChannels[currentIndex - 1]
                     # gets the new channel (the one before this one)
                 else:
                 # index is 0 (first one)
@@ -3228,9 +3414,9 @@ class tepmWindow(QWidget):
                     # stops
             else:
             # action is Next
-                if currentIndex < (len(channels) - 1):
+                if currentIndex < (len(self.activeChannels) - 1):
                 # if it's not the last channel yet
-                    newChannel = channels[currentIndex + 1]
+                    newChannel = self.activeChannels[currentIndex + 1]
                     # gets the new channel (the one after this)
                 else:
                 # index == length (-1 for list offset)
@@ -3246,16 +3432,8 @@ class tepmWindow(QWidget):
             self.predictChannelLine.setText("")
             # clears the text entry field
 
-        elif action == "Case":
-        # case sensitive name swap
-            newChannel = channel
-            # grabs the passed argument name
-            ctrl.newChannelQueue.put_nowait(newChannel)
-            # adds the new channel to the channel queue (doesn't request new data because the channel is the same)
-            ctrl.newChannelSignal.emit()
-            # sends a signal to indicate a new channel
-            self.predictChannelLine.setText("")
-            # clears the text entry field
+        self.setFocus()
+        # focuses the window over every element (removes focus UI from channel/bet line)
 
 
 
@@ -3338,8 +3516,8 @@ class tepmWindow(QWidget):
         newSize = max(850, int(buttonCount * self.buttonWidth))
         # calculates a new size for the screen width (to fit buttons), picks the larger width from 850 and (x*y)
 
-        self.setMinimumSize(newSize, 950)
-        self.resize(newSize, 950)
+        self.setMinimumSize(newSize, 990)
+        self.resize(newSize, 990)
         # the window size
 
 
@@ -3397,8 +3575,10 @@ class tepmWindow(QWidget):
             # if there's data stored (has been visited during this session)
                 lastCheck = channelData["timestamp"]
                 # checks when the live status was last checked
-                if (lastCheck + 1800) < time.time():
-                # if it's been more than 1800 seconds (30 minutes) since the last time the status was checked
+                activeStatus = channelData["active"]
+                # checks if the channel is set to active or removed from the map
+                if ((lastCheck + 900) < time.time()) and activeStatus:
+                # if it's been more than 15 minutes since the last time the status was checked and the channel is "active"
                     checkLive = True
                     # sets the checkLive boolean to true, so the status will be re-checked
 
@@ -3426,22 +3606,65 @@ class tepmWindow(QWidget):
                     isLive = False
                     # defaults to False (offline)
 
-                if isLive:
-                # if the live status is True
-                    self.channelLiveStatus.setIcon(self.liveStatus)
-                    # sets the live icon
+                liveMatch = bool((self.pastChannels.get(caseName, {"live": False}).get("live", False)) == isLive)
+                # stores a boolean for if the previous live state matches the current one
+
+                if not liveMatch or caseName not in self.pastChannels:
+                # if the live status doesn't match stored, or the channel hasn't yet been stored
+                    liveDetailsDict = liveDetailGrabber(self.state, caseName)
+                    # makes a request to get the livestream details
+
+                    if liveDetailsDict["success"]:
+                    # if the live details dictionary return is successful
+                        liveTitle = str(liveDetailsDict["title"])
+                        liveGame = str(liveDetailsDict["game"])
+                        # grabs the title and the game from the return
+
+                        if len(liveTitle) > 50:
+                        # if the title is > 50 characters long
+                            liveTitle = (liveTitle[:47] + "...")
+                            # only stores the first part, to prevent extremely long titles (adds "..." to indicate it's cut off)
+
+                        if liveDetailsDict["status"]:
+                        # if the status return is True (means the stream is live)
+                            statusString = f'Streaming {liveGame} - "{liveTitle}" ({caseStreak})'
+                            # stores a status string
+                        else:
+                        # return is False -> stream is offline, data grab is good
+                            statusString = f"Offline ({caseStreak})"
+                            # sets offline string with game and streak
+                    else:
+                    # not successful
+                        statusString = f"({caseStreak})"
+                        # just the streak number (or N/A if that fails, too)
+                    self.predictChannelStatus.setText(statusString)
+                    # changes the status text
                 else:
-                # live status False (fail or offline)
-                    self.channelLiveStatus.setIcon(self.offlineStatus)
-                    # sets the offline icon
+                # if the live has already been stored
+                    statusString = self.pastChannels[caseName]["status"]
+                    # grabs the old one from cache
                 
-                self.pastChannels[caseName] = {"streak": caseStreak, "live": isLive, "timestamp": time.time()}
-                # adds both to map, adds timestamp for check
+                self.pastChannels[caseName] = {"streak": caseStreak, "live": isLive, "timestamp": time.time(), "active": True, "status": statusString}
+                # adds both to map, adds timestamp for check, adds boolean for activity and the status string
 
             if caseName and (caseName != self.currentChannel):
             # if the case sensitive name is set and it's not the same as the currently displayed channel
+                activeStatus = self.pastChannels[caseName]["active"]
+                # gets the active status
+                if not activeStatus and self.pastChannels.get("swap", False):
+                # if the active status is false (meaning it's been removed) and there's a request to swap the channel
+                    self.pastChannels[caseName]["timestamp"] = 0
+                    # sets the timestamp to 0, so that the liveCheck gets triggered next cycle, refreshing all data
+                    self.pastChannels[caseName]["active"] = True
+                    # sets the active boolean to True, so that the predictUI check can add it to the active list, enabling all the relevant buttons
+                    self.pastChannels["swap"] = False
+                    # disables the swap command
                 self.currentChannel = caseName
                 # updates the internal name scheme
+                if caseName in self.pastChannels:
+                # if the channel has been stored already
+                    self.predictChannelStatus.setText(self.pastChannels[caseName]["status"])
+                    # changes the status text to match the stored one (since this is most likely after a swap, ensures the status gets swapped, too)
                 self.predictUI("Check")
                 # calls the predict UI function with "check" to change the button states
 
@@ -3463,7 +3686,7 @@ class tepmWindow(QWidget):
 
             ownVoteID = prediction["votedOutcome"]
             # gets the outcome user (may have) voted for
-            ownVoteSum = int(prediction["votedSum"])
+            ownVoteSum = prediction.get("votedSum", 0)
             # gets the amount user (may have) voted with
             ownVoteWin = prediction.get("sumWon", 0)
             # gets the total won points (null until resolved)
@@ -3484,7 +3707,7 @@ class tepmWindow(QWidget):
                     widget.hide()
                     # hides the widget
 
-                self.predictChannelLabel.setText(f"{self.currentChannel} ({self.pastChannels[caseName]["streak"]})")
+                self.predictChannelLabel.setText(f"{self.currentChannel}")
                 # updates the channel label
                 
                 if eventType == "active":
@@ -3743,9 +3966,7 @@ class tepmWindow(QWidget):
                                 # text if user bet and won
                                 newPoints = (ownVoteWin - ownVoteSum)
                                 # gets the amount of points won (gained)
-                                newPointsPercent = ((newPoints / ownVoteSum) * 100)
-                                # gets the percentage of bet that the new points amount to
-                                winString = f"You won {ownVoteWin:,.0f} {pointsString} with a bet of {ownVoteSum:,.0f} {pointsString}! (+{(newPoints):,.0f} / {newPointsPercent:.1f}%)"
+                                winString = f"You won {ownVoteWin:,.0f} {pointsString} with a bet of {ownVoteSum:,.0f} {pointsString}! (+{(newPoints):,.0f})"
                                 # forms win string
                                 self.betLabelUpdater(winString, "Green")
                                 # bet label update
@@ -3780,6 +4001,8 @@ class tepmWindow(QWidget):
                             # user didn't vote
                                 self.pastPredictions[eventID] = {"channel": self.currentChannel, "title": title, "timestamp": chartStamp, "outcomes": outcomesList, "winner": winOutcomeTitle, "balance": self.predictChannelPoints}
                                 # stores the event details with no vote details
+                            self.savePredictions()
+                            # saves the prediction history
 
                         predictionHistory = prediction["self"]
                         # gets the past predictions from this channel
@@ -3920,6 +4143,9 @@ class tepmWindow(QWidget):
         eventType = self.predictionID["lastType"]
         # grabs the current event type (active, locked, resolved)
 
+        self.setFocus()
+        # moves focus away from the bet/channel lines (QoL)
+
         if eventType == "locked":
         # if the event is locked
             self.predictionUserInform(f"Cannot bet on a closed prediction!")
@@ -3948,8 +4174,6 @@ class tepmWindow(QWidget):
                 outcomeID = None
                 # sets to none
 
-            balance = self.predictChannelPoints
-            # grabs the current balance for the channel to send
             if self.predictionID.get(eventID, False):
             # if there's a stored dictionary for this event
                 optionName = self.predictionID[eventID]["title"]
@@ -3962,14 +4186,18 @@ class tepmWindow(QWidget):
 
             if outcomeID:
             # if outcomeID is defined (didn't fail, was set correctly)
-                if currentBet == outcomeID or not currentBet:
+                if currentBet == outcomeID:
                 # if there's already a bet with this outcome or no bet set yet
-                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, balance)
+                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, True)
                     # calls the pyQt signal with the details (bet int, outcomeID)
+                elif not currentBet:
+                # if there's no bet yet
+                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, False)
+                    # sends the bet with False (no bet yet)
                 else:
                 # the bet is not the same as the selected button (more than likely visually screwed)
-                    ctrl.makeBet.emit(bet, eventID, currentBet, optionName, balance)
-                    # sends the bet with the current bet ID instead (overrides the selected button, in case there's non)
+                    ctrl.makeBet.emit(bet, eventID, currentBet, optionName, True)
+                    # sends the bet with the current bet ID instead (overrides the selected button, in case there's none)
             else:
             # if it wasn't defined (either didn't get set properly or failed to grab)
                 self.predictionUserInform(f"Failed to send bet due to internal error!")
@@ -4178,8 +4406,8 @@ class tepmWindow(QWidget):
                 return
                 # stop
 
-        if currentBet == 0 and (action not in ["Max", "Default"]):
-        # if the bet is 0, and it's not a Max/Default (those set the points after)
+        if currentBet == 0 and (action not in ["Max", "Default", "Quick"]):
+        # if the bet is 0, and it's not a Max/Default/Quick (those set the points after)
             self.predictionUserInform("Cannot bet 0 points")
             # user inform
             return False
@@ -4196,17 +4424,33 @@ class tepmWindow(QWidget):
                 self.predictAmountLine.setText("250000")
                 # sets Twitch max bet
 
-        elif action == "Default":
-        # if it calls to enter the default
+        elif action == "Default" or action == "Quick":
+        # if it calls to enter the default/staged bet or a quick-bet event
             if roundBalanceBet:
             # if balance rounding is enabled
-                leftover, bet = divmod(currentBal, defaultBet)
-                # performs divmod on the current balance to form the bet 
-                # (eg. balance of 34,982, default bet of 10,000 -> balance of 30,000 and a bet of 4,982)
+                if stageBetBoolean:
+                # if staged bets are enabled
+                    if currentBal >= stageBetBalance:
+                    # if the current balance is greater or equal to the required balance for staged bets
+                        leftover, bet = divmod(currentBal, stageBet)
+                        # performs divmod on the current balance with the stage bet to form a bet
+                    else:
+                        leftover, bet = divmod(currentBal, defaultBet)
+                        # performs divmod on the current balance to form the bet 
+                else:
+                # staged bets aren't enabled
+                    leftover, bet = divmod(currentBal, defaultBet)
+                    # performs divmod on the current balance to form the bet
+
                 if bet == 0:
                 # if the bet is 0 (meaning the divmod lead to a perfect division)
-                    bet = defaultBet
-                    # sets the default bet size instead
+                    if stageBetBoolean and currentBal >= stageBetBalance:
+                    # if staged bets are on and the balance fits requirement
+                        bet = stageBet
+                        # sets the stage bet size instead
+                    else:
+                        bet = defaultBet
+                        # sets the default bet size instead
                 self.predictAmountLine.setText(f"{bet}")
                 # sets the calculated bet into the bet amount line
             else:
@@ -4214,8 +4458,13 @@ class tepmWindow(QWidget):
                 self.predictAmountLine.setText(f"{defaultBet}")
                 # sets the configured default bet instead
 
+            if action == "Quick":
+            # if it's a quick-bet
+                self.predictIntermediary()
+                # calls the intermediary to make a bet with newly formed bet
+
         else:
-        # if it doesn't call for max
+        # if it doesn't call for max/default
             if currentBet > currentBal:
             # if the bet is larger than the current balance
                 self.predictionUserInform("Bet cannot exceed balance!")
@@ -4627,6 +4876,135 @@ def liveGrabber(state, channel:str) -> dict:
             # if the return is null (the stream is offline)
                 return {"success": True, "error": "None", "live": False}
                 # returns False bool
+        else:
+        # if the data package isn't valid and/or there's no data header
+            return {"success": False, "error": "No data!"}
+            # returns a dictionary with failure
+
+    except Exception as dtErr:
+    # saves the error as d(a)t(a)Err(or)
+        return {"success": False, "error": str(dtErr)}
+        # returns a dictionary with failure
+
+
+
+### Live Details Grabber ###
+
+def liveDetailGrabber(state, channel:str) -> dict:
+    """A function that grabs the channel's livestream details (title and game) via GQL"""
+
+    authToken = state.authToken
+    # gets the authorisation token from the app state variable
+
+    headers = {
+            "Client-Id": hashMap["ClientID"],
+            "Authorization": f"OAuth {authToken}",
+    }
+    # forms the headers used to dictate the data request type
+    
+    payload = {
+    # forms a payload from the required information
+        "operationName": hashMap["Live Details Operation"],
+        "variables": {
+            "channel": channel,
+            # which channel to "login" to
+            "clipSlug": "",
+            "isClip": False,
+            "isLive": True,
+            "isVodOrCollection": False,
+            "vodID": ""
+            # static payload variables
+        },
+        "extensions": {
+            "persistedQuery": {
+                "sha256Hash": hashMap["Live Details Hash"],
+                "version": int(hashMap["Live Details Version"])
+            }
+        }
+    }
+
+    try:
+    # tries to make a request
+        request = reqSession.post(rURL, json = payload, headers = headers)
+        # forms a data request
+        detailData = request.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": str(reqErr)}
+        # returns dictionary with fail and error
+
+    gamePayload = {
+    # forms a payload from the required information
+        "operationName": hashMap["Live Category Operation"],
+        "variables": {
+            "channelLogin": channel,
+            # which channel to "login" to
+            "tagType": "CONTENT"
+            # static variable
+        },
+        "extensions": {
+            "persistedQuery": {
+                "sha256Hash": hashMap["Live Category Hash"],
+                "version": int(hashMap["Live Category Version"])
+            }
+        }
+    }
+
+    try:
+    # tries to make a second request
+        request = reqSession.post(rURL, json = gamePayload, headers = headers)
+        # forms a data request
+        gameData = request.json()
+        # stores the resulting data json
+    except Exception as reqErr:
+    # if there's an error (typically network-related)
+        return {"success": False, "error": str(reqErr)}
+        # returns dictionary with fail and error
+
+    try:
+    # tries to read the received data files
+        if detailData and detailData["data"] and gameData and gameData["data"]:
+        # checks if the data packages are valid and that there's headers for "data"
+            try:
+                streamData = detailData["data"]["user"]["broadcastSettings"]
+                # grabs the stream information
+                streamName = streamData.get("title", False)
+                # grabs the creation date
+                if streamName:
+                # if the stream title is set/real
+                    try:
+                        streamStatus = gameData["data"]["user"]["stream"]
+                        # grabs the stream sub-dictionary
+                        if streamStatus and streamStatus != "None":
+                        # if the stream is live (not None)
+                            gameName = streamStatus["game"]["name"]
+                            # grabs the game's name
+                            if gameName:
+                            # if the game name is defined
+                                return {"success": True, "error": "None", "title": streamName, "game": gameName, "status": True}
+                                # returns dictionary with stream title and game name
+                            else:
+                            # no game name
+                                return {"success": True, "error": "None", "title": streamName, "game": "Uncategorised", "status": True}
+                                # returns dictionary with stream title with placeholder game name
+                        else:
+                        # stream offline
+                            return {"success": True, "error": "No game", "title": "N/A", "game": "N/A", "status": False}
+                            # returns dictionary with false status (offline)
+
+                    except Exception as twErr:
+                    # saves the error as tw(itch)Err(or)
+                        return {"success": False, "error": str(twErr)}
+                        # returns a dictionary with failure
+                else:
+                    return {"success": False, "error": "No stream!"}
+                    # fail return
+
+            except Exception as twErr:
+            # saves the error as tw(itch)Err(or)
+                return {"success": False, "error": str(twErr)}
+                # returns a dictionary with failure
         else:
         # if the data package isn't valid and/or there's no data header
             return {"success": False, "error": "No data!"}
@@ -5908,7 +6286,7 @@ class PredictionWorker(QObject):
 
 ### Send Bet ###
 
-    def bet(self, bet: int, eventID: str, outcomeID: str, selected: str, balance: int):
+    def bet(self, bet: int, eventID: str, outcomeID: str, selected: str, addon: bool = False):
         """Function to make/send a bet"""
   
         betInfo = sendPrediction(self.state, bet, eventID, outcomeID)
@@ -5916,8 +6294,13 @@ class PredictionWorker(QObject):
 
         if betInfo["success"]:
         # if the return is a success
-            ctrl.taskChange.emit(f'Bet {bet:,.0f} on "{selected}"\nMay the odds be ever in your favor!')
-            # sets info text
+            if addon:
+            # if this is adding points to an existing bet
+                ctrl.taskChange.emit(f'Added {bet:,.0f} to bet!')
+                # sets info text with addon confirmation
+            else:
+                ctrl.taskChange.emit(f'Bet {bet:,.0f} on "{selected}"\nMay the odds be ever in your favor!')
+                # sets info text
             ctrl.mainWindow.predictAmountLine.setText("")
             # clears the text
         else:
@@ -5928,6 +6311,10 @@ class PredictionWorker(QObject):
             # if the windows network error 10054 is present in the error string (looks for "10054" and "connection aborted")
                 err = "Windows network error! Please try again in a couple seconds..."
                 # overrides the error message 
+            elif "EVENT_NOT_ACTIVE" in err:
+            # if the event is closed (timer can be off a little)
+                err = "Prediction has closed!"
+                # overrides the error message
             ctrl.taskChange.emit(f"Failed to place a bet!\n({err})")
             # changes the text to inform (includes error message)
 
@@ -6229,8 +6616,8 @@ class SuperController(QObject):
     """A pyQt signal to change the prediction/balance refresh timer"""
     predictionTimerOverride = pyqtSignal()
     """A pyQt signal to set an event and immediately override timer"""
-    makeBet = pyqtSignal(int, str, str, str, int)
-    """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str, balance: int)"""
+    makeBet = pyqtSignal(int, str, str, str, bool)
+    """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str, addon: bool)"""
     stopPredictionWorker = pyqtSignal()
     """A pyQt signal to stop the prediction worker"""
     newChannelSignal = pyqtSignal()
@@ -6855,6 +7242,8 @@ class SuperController(QObject):
         # boolean isn't True (yet)
             self.historyWorkerStart()
             # calls the history worker to start
+            self.taskChange.emit("Opening history window...")
+            # user inform
             self.historyWindowBool = True
             # sets the boolean to True to prevent a new window start
 
@@ -6873,6 +7262,8 @@ class SuperController(QObject):
         # boolean isn't True (yet)
             self.helpWorkerStart()
             # calls the help worker to start
+            self.taskChange.emit("Opening help window...")
+            # user inform
             self.helpWindowBool = True
             # sets the boolean to True to prevent a new window start
 

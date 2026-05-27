@@ -32,5 +32,11 @@
     "Prediction Lock Hash": "1f2b1eb44af35f055308e78ffbe81c2f958408f9b32d076a759a84ab213285d4",
     "Live Status Operation": "UseLive",
     "Live Status Version": 1,
-    "Live Status Hash": "639d5f11bfb8bf3053b424d9ef650d04c4ebb7d94711d644afb08fe9a0fad5d9"
+    "Live Status Hash": "639d5f11bfb8bf3053b424d9ef650d04c4ebb7d94711d644afb08fe9a0fad5d9",
+    "Live Details Operation": "VideoPlayerMediaSessionManager",
+    "Live Details Version": 1,
+    "Live Details Hash": "694c36677896425624f1293c9cb5aa4d08ed813993cf84c80d13d9380721fda2",
+    "Live Category Operation": "PbyPGame",
+    "Live Category Version": 1,
+    "Live Category Hash": "f7444c6e187868a7b82e7659e59bb8ccd177cb4deca277e3a951fb2ef66c2389"
 }

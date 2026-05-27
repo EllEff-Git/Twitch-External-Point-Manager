@@ -52,7 +52,7 @@ class asyncHelpWindow(QMainWindow):
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-        self.setMinimumSize(QSize(900, 500))
+        self.setFixedSize(QSize(650, 500))
         # the window size
 
     ### UI Elements ###
@@ -84,9 +84,11 @@ class asyncHelpWindow(QMainWindow):
                             "Set max bet: Ctrl+M\n"
                             "Set default bet: Ctrl+D\n"
                             "Halve current bet: Ctrl+H\n"
+                            "Double current bet: Ctrl+G\n"
+                            "Quick-bet: Ctrl+Q (no confirmation, uses default/staged bet)"
                             "Clear bet field: Ctrl+Y (ensure everything is deselected with Escape\n"
                             "Select an outcome: Ctrl+num (any number 1-9 = outcomes 1-9, 0 = outcome 10)\n"
-                            "Save own predictions: Ctrl+S\n"
+                            "Save own prediction history: Ctrl+S\n"
                             "Cycle to previous stream: Ctrl+< (Ctrl+Shift+,)\n"
                             "Cycle to next stream: Ctrl+> (Ctrl+Shift+.)\n\n"
                             "Please use the exit button to close, in order to save prediction details!\n"
