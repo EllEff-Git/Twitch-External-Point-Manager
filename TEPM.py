@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.5.27.0423"
+tepmVer = "0.6.2.0237"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -54,6 +54,8 @@ modWindowPath = os.path.join(dataDir, "TEPMmv.exe")
 """The prediction mod view window executable path"""
 helpWindowPath = os.path.join(dataDir, "TEPMhelp.exe")
 """The help window executable path"""
+autoBetWindowPath = os.path.join(dataDir, "TEPMauto.exe")
+"""The auto-bet window executable path"""
 historyWindowPath = os.path.join(dataDir, "TEPMhist.exe")
 """The history window executable path"""
 predictHistoryPath = os.path.join(directory, "Prediction History.json")
@@ -1335,8 +1337,12 @@ class tepmWindow(QWidget):
     """A pyQt signal to confirm the authentication token has been validated successfully and to pass the action"""
     taskText = pyqtSignal(str)
     """A pyQt signal to set the task string"""
-    balanceOverride = pyqtSignal(int)
-    """A pyQt signal to temporarily override the balance (bet success)"""
+    predictUIsignal = pyqtSignal(str)
+    """A pyQt signal to perform prediction view UI checks"""
+    predictionUserInformSignal = pyqtSignal(str)
+    """A pyQt signal to set the prediction user prompt"""
+    sendAutoBetData = pyqtSignal()
+    """A pyQt signal to have auto-better request an initial data dictionary"""
 
     def __init__(self, state, passedProfile):
         super().__init__()
@@ -1378,10 +1384,6 @@ class tepmWindow(QWidget):
 
         self.predictChannelPoints = 0
         """Variable to store the predict channel's point balance"""
-        self.detailsWindowBool = False
-        """Whether the details window is alive"""
-        self.modWindowBool = False
-        """Whether the mod window is alive"""
 
         self.currentChannel = None
         """The currently selected channel, according to predictUpdateUI"""
@@ -1398,11 +1400,14 @@ class tepmWindow(QWidget):
         """Map that stores prediction numbers (bets, wins, etc)"""
         self.pastPredictions = {}
         """Map that stores previous prediction outcomes"""
-        self.pastChannels = {}
+        self.pastChannels = {"swap": False}
         """Map that stores previously checked channels in prediction view"""
         self.activeChannels = []
         """A list of channels that have been 'visited' in the prediction view"""
-
+        self.activeChannelIndex = 0
+        """Variable to store the active channel (visible) index number"""
+        self.autoBetBool = False
+        """Boolean to indicate whether there's an auto-better currently in need of data"""
         self.betValidator = QIntValidator(0, 250000)
         """Validator to use with the bet line to ensure it fits Twitch's rules"""
 
@@ -1525,8 +1530,6 @@ class tepmWindow(QWidget):
         # calls the task label changer when the task text changes
         ctrl.taskChange.connect(self.taskLabelChanger)
         # connects the controller signal to the task view changer function (lets super controller set the text)
-        self.balanceOverride.connect(lambda bal: self.predictPointLabel.setText(f"Balance: {bal:,.0f} points"))
-        # connects the balance override to the balance label to temporarily override it before an update (QoL)
 
 
 
@@ -1679,6 +1682,15 @@ class tepmWindow(QWidget):
         # adds the channel name to the layout
         self.predictChannelStatusLayout.addWidget(self.predictChannelStatus, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the status to the layout (under the channel name)
+
+
+
+    ### Prediction Notifications ###
+
+        self.predictionNotiWidget = QWidget()
+        """A widget to show/hide a notification"""
+        self.predictionNotiLayout = QGridLayout(self.predictionNotiWidget)
+        """A notification layout for predictions"""
 
 
 
@@ -2486,18 +2498,18 @@ class tepmWindow(QWidget):
         self.modButton.setMinimumSize(80, 40)
         # min size
 
-        self.detailsButton = QPushButton("Details")
-        """Button to display further information about the bet"""
-        self.detailsButton.setToolTip("Open the prediction details window")
-        # tooltip
-        self.detailsButton.setMinimumSize(80, 40)
-        # min size
-
         self.historyButton = QPushButton("History")
         """Button to display further information about past user bets"""
         self.historyButton.setToolTip("Open the prediction history window")
         # tooltip
         self.historyButton.setMinimumSize(80, 40)
+        # min size
+
+        self.detailsButton = QPushButton("Details")
+        """Button to display further information about the bet"""
+        self.detailsButton.setToolTip("Open the prediction details window")
+        # tooltip
+        self.detailsButton.setMinimumSize(80, 40)
         # min size
 
         self.helpButton = QPushButton("Help")
@@ -2507,21 +2519,31 @@ class tepmWindow(QWidget):
         self.helpButton.setMinimumSize(80, 40)
         # min size
 
+        self.autoBetButton = QPushButton("Auto-Bet")
+        """Button to display an auto-betting config window"""
+        self.autoBetButton.setToolTip("Open auto-betting options")
+        # tooltip
+        self.autoBetButton.setMinimumSize(80, 40)
+        # min size
+
         self.extraButtonLayout.addWidget(self.modButton, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.extraButtonLayout.addWidget(self.historyButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         self.extraButtonLayout.addWidget(self.detailsButton, 0, 2, alignment=Qt.AlignmentFlag.AlignCenter)
         self.extraButtonLayout.addWidget(self.helpButton, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.extraButtonLayout.addWidget(self.historyButton, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.extraButtonLayout.addWidget(self.autoBetButton, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds all buttons to the button layout
 
         self.modButton.clicked.connect(lambda: self.modCheck("Window"))
         # connects the mod button to the mod check (-> mod view, if mod)
+        self.historyButton.clicked.connect(lambda: (self.savePredictions("Start")))
+        # connects the history button to the prediction save function and history window
         self.detailsButton.clicked.connect(lambda: ctrl.startDetailSignal.emit())
         # connects the detail button to the details window
         self.helpButton.clicked.connect(lambda: ctrl.startHelpSignal.emit())
         # connects the help button to the help window
-        self.historyButton.clicked.connect(lambda: (self.savePredictions("Start")))
-        # connects the history button to the prediction save function and history window
-    
+        self.autoBetButton.clicked.connect(lambda: ctrl.startAutoBetSignal.emit())
+        # connects the auto bet button to the auto bet window
+
 
 
     ### Channel Swap ###
@@ -2591,28 +2613,37 @@ class tepmWindow(QWidget):
         self.escapeFocusShortcut = QShortcut(QKeySequence("Escape"), self)
         # adds a keybind to unfocus current element
 
-        self.predictChannelSwapButton.clicked.connect(lambda: self.predictUI("Swap"))
+        self.predictChannelSwapButton.clicked.connect(lambda: self.predictUIsignal.emit("Swap"))
         # connects the swap button to the UI swapping
-        self.predictChannelLine.returnPressed.connect(lambda: self.predictUI("Swap"))
+        self.predictChannelLine.returnPressed.connect(lambda: self.predictUIsignal.emit("Swap"))
         # connects pressing enter (return) to the UI swapping
 
-        self.predictChannelPreviousButton.clicked.connect(lambda: self.predictUI("Previous"))
+        self.predictChannelPreviousButton.clicked.connect(lambda: self.predictUIsignal.emit("Previous"))
         # connects the previous button to the UI swapping
-        self.predictChannelPreviousShortcut.activated.connect(lambda: self.predictUI("Previous"))
+        self.predictChannelPreviousShortcut.activated.connect(lambda: self.predictUIsignal.emit("Previous"))
         # connects the previous shortcut to the UI swapping
 
-        self.predictChannelRemoveButton.clicked.connect(lambda: self.predictUI("Remove"))
+        self.predictChannelRemoveButton.clicked.connect(lambda: self.predictUIsignal.emit("Remove"))
         # connects the remove button to the UI swapping
 
-        self.predictChannelNextButton.clicked.connect(lambda: self.predictUI("Next"))
+        self.predictChannelNextButton.clicked.connect(lambda: self.predictUIsignal.emit("Next"))
         # connects the next button to the UI swapping
-        self.predictChannelNextShortcut.activated.connect(lambda: self.predictUI("Next"))
+        self.predictChannelNextShortcut.activated.connect(lambda: self.predictUIsignal.emit("Next"))
         # connects the next shortcut to the UI swapping
 
         self.escapeFocusShortcut.activated.connect(self.setFocus)
         # focuses the main window (so that the bet/channel fields can be unfocused)
 
-        ctrl.newPData.connect(self.predictUpdateUI)
+        self.predictUIsignal.connect(self.predictUI)
+        # connects prediction UI signals to the function
+
+        self.predictionUserInformSignal.connect(self.predictionUserInform)
+        # connects prediction user inform signals to the function
+
+        self.sendAutoBetData.connect(lambda: (setattr(self, "autoBetBool", True), ctrl.predictionTimerOverride.emit()))
+        # connects the data request signal to set the bool to True, also calls the prediction timer to instantly poll new data
+
+        ctrl.newPData.connect(self.predictionDataParser)
         # connects the new prediction data signal to the predict UI updater
 
 
@@ -3136,19 +3167,21 @@ class tepmWindow(QWidget):
             self.savePredictions()
             # saves when going to menu
         elif action == "Save":
-        # if called to save the prediction details
+        # if called to save the prediction details (Ctrl+S)
             self.savePredictions()
             # calls the savePredictions to save current stats
         else:
         # exit button
             self.savePredictions()
             # calls the savePredictions to save current stats
-            ctrl.browserProfile.deleteLater()
+            self.taskLabelChanger("Exiting...")
+            # user inform
             self.browserPage.deleteLater()
             self.browserView.deleteLater()
+            ctrl.browserProfile.deleteLater()
             # deletes the browser-related variables
             app.exit()
-            # closes the app
+            # quits the application
 
 
 
@@ -3185,7 +3218,7 @@ class tepmWindow(QWidget):
             pass
             # doesn't do anything (no need to inform user of saved history)
         else:
-            self.predictionUserInform("Saved prediction history!")
+            self.predictionUserInformSignal.emit("Saved prediction history!")
             # user inform
         
 
@@ -3252,10 +3285,10 @@ class tepmWindow(QWidget):
             self.savePredictions("Init")
             # calls the prediction save to get the current map of past predictions (init to avoid user inform)
 
-            self.predictionUserInform(f"Grabbing prediction for {predictChannel}...")
+            self.predictionUserInformSignal.emit(f"Grabbing prediction for {predictChannel}...")
             # user inform text
 
-            self.predictUI("Init")
+            self.predictUIsignal.emit("Init")
             # calls the prediction UI to start
 
         elif action == "Browser":
@@ -3282,18 +3315,18 @@ class tepmWindow(QWidget):
 
 ### Prediction UI ###
 
-    def predictUI(self, action:str = None, channel:str = None):
+    def predictUI(self, action:str = None):
         """Function that handles prediction UI changes"""
 
-        for entry, entryDict in self.pastChannels.items():
+        for channel, entryDict in self.pastChannels.items():
         # goes through the past channels map's entries and their stored dictionaries
-            if type(entryDict) == bool:
-            # if the entry is regarding swap
+            if type(entryDict) == bool or type(entryDict) == str:
+            # if the entry is for "swap" or "visible", which are a boolean and a string
                 pass
-                # doesn't touch (can't .get() a boolean lol)
-            elif entryDict.get("active", False) and entry not in self.activeChannels:
-            # if the entry dictionary has an active flag, and the channel isn't in the list yet
-                self.activeChannels.append(entry)
+                # doesn't touch
+            elif (entryDict.get("active", False) == True) and (channel not in self.activeChannels):
+            # if the entry dictionary has an active boolean flag, and the channel isn't in the list yet
+                self.activeChannels.append(channel)
                 # adds the channel to the list
 
         if self.currentChannel:
@@ -3301,24 +3334,24 @@ class tepmWindow(QWidget):
             if self.currentChannel in self.activeChannels:
             # if the channel is present in the list of active channels
                 try:
-                    currentIndex = self.activeChannels.index(self.currentChannel)
+                    self.activeChannelIndex = self.activeChannels.index(self.currentChannel)
                     # gets the current channel's index (position)
                 except:
-                    currentIndex = 0
+                    self.activeChannelIndex = 0
                     # defaults to 0
             else:
             # if it's not present (been removed)
-                currentIndex = -1
-                # sets to negative 1 (this way it can go forward, but can't go back)
-        else:
+                pass
+                # doesn't do anything, will get changed on next swap
+        elif action == "Init":
         # if there's not a channel/the list is empty (startup)
-            currentIndex = 0
+            self.activeChannelIndex = 0
             # sets index to 0
 
         if action == "Check":
-        # check action (after swapping channel)
-            if currentIndex == (len(self.activeChannels)-1):
-            # if the index is max
+        # check action (after swapping/removing channel)
+            if self.activeChannelIndex >= (len(self.activeChannels)-1):
+            # if the index is max (or higher than max)
                 self.predictChannelNextButton.setEnabled(False)
                 # disables the next button (nothing to go to)
                 self.predictChannelNextButton.setToolTip(f"Move to next stream (None)")
@@ -3327,10 +3360,10 @@ class tepmWindow(QWidget):
             # not max index
                 self.predictChannelNextButton.setEnabled(True)
                 # enables the next button
-                self.predictChannelNextButton.setToolTip(f"Move to next stream ({self.activeChannels[currentIndex + 1]})")
+                self.predictChannelNextButton.setToolTip(f"Move to next stream ({self.activeChannels[self.activeChannelIndex + 1]})")
                 # sets tooltip with next next stream
-            if currentIndex == 0 or currentIndex == -1:
-            # if the current index is 0 (first channel)
+            if self.activeChannelIndex <= 0:
+            # if the current index is first (or lower than first)
                 self.predictChannelPreviousButton.setEnabled(False)
                 # disables the previous button (nothing to go to)
                 self.predictChannelPreviousButton.setToolTip(f"Return to previous stream (None)")
@@ -3339,7 +3372,7 @@ class tepmWindow(QWidget):
             # not 0 index
                 self.predictChannelPreviousButton.setEnabled(True)
                 # enables the previous button
-                self.predictChannelPreviousButton.setToolTip(f"Return to previous stream ({self.activeChannels[currentIndex - 1]})")
+                self.predictChannelPreviousButton.setToolTip(f"Return to previous stream ({self.activeChannels[self.activeChannelIndex - 1]})")
                 # sets tooltip with previous stream
             if self.currentChannel in self.activeChannels:
             # if the channel is in the active list
@@ -3362,7 +3395,9 @@ class tepmWindow(QWidget):
                 # removes the channel from active list
                 self.currentChannel = None
                 # resets current channel, so that predictUpdateUI sets it again, forcing a UI check right after
-            self.predictionUserInform(f"Removed {tempChannel} from navigation list")
+                self.pastChannels["swap"] = False
+                # disables the swap request
+            self.predictionUserInformSignal.emit(f"Removed {tempChannel} from navigation list")
             # user inform
             self.predictChannelRemoveButton.setEnabled(False)
             # disables the button until stream is swapped
@@ -3378,15 +3413,15 @@ class tepmWindow(QWidget):
             self.eop()
             # calls "end of program" to show menu and exit buttons
             ctrl.predictionTimerOverride.emit()
-            # sends a signal to skip the initial 15 second wait to get first data right away
+            # sends a signal to skip the initial 7 second wait to get first data right away
             
         elif action == "Swap":
-        # if user pressed swap button
+        # if user pressed swap button/enter
             newChannel = self.predictChannelLine.text().strip()
-            # temp var for channel
+            # temp variable for channel (strips whitespace)
             if not newChannel or newChannel == "":
             # if the channel is empty
-                self.predictionUserInform("No streamer set, please enter one to change streams")
+                self.predictionUserInformSignal.emit("No stream set, please enter one to change streams")
                 # user inform
             else:
                 ctrl.newChannelQueue.put_nowait(newChannel)
@@ -3402,25 +3437,25 @@ class tepmWindow(QWidget):
         # if user pressed previous button
             if action == "Previous":
             # action is Previous
-                if currentIndex > 0:
-                # if the index isn't 0/-1 (first one)
-                    newChannel = self.activeChannels[currentIndex - 1]
+                if self.activeChannelIndex > 0 and (len(self.activeChannels) > 1 or self.currentChannel not in self.activeChannels):
+                # if the index is greater than the first entry of the list (and there's more than 1 to go to, or the channel selected isn't in the list (when it's been removed but not swapped yet))
+                    newChannel = self.activeChannels[self.activeChannelIndex - 1]
                     # gets the new channel (the one before this one)
                 else:
                 # index is 0 (first one)
-                    self.predictionUserInform("You've reached the first channel!")
+                    self.predictionUserInformSignal.emit("You've reached the first channel!")
                     # user inform
                     return
                     # stops
             else:
             # action is Next
-                if currentIndex < (len(self.activeChannels) - 1):
+                if self.activeChannelIndex < (len(self.activeChannels) - 1):
                 # if it's not the last channel yet
-                    newChannel = self.activeChannels[currentIndex + 1]
+                    newChannel = self.activeChannels[self.activeChannelIndex + 1]
                     # gets the new channel (the one after this)
                 else:
                 # index == length (-1 for list offset)
-                    self.predictionUserInform("You've reached the last channel!")
+                    self.predictionUserInformSignal.emit("You've reached the last channel!")
                     # user inform
                     return
                     # stops
@@ -3431,6 +3466,8 @@ class tepmWindow(QWidget):
             # sends a signal to indicate a new channel
             self.predictChannelLine.setText("")
             # clears the text entry field
+            self.pastChannels["swap"] = True
+            # sets the boolean in the pastChannels map to True, telling predictUpdateUI to reset channel info
 
         self.setFocus()
         # focuses the window over every element (removes focus UI from channel/bet line)
@@ -3524,8 +3561,9 @@ class tepmWindow(QWidget):
 
 ### Prediction -> UI Update ###
 
-    def predictUpdateUI(self, prediction: dict):
-        """Function to update UI based on prediction/balance data"""
+    def predictionDataParser(self, prediction: dict):
+        """Function to parse the prediction data down to update UI\n
+        Planned; separating the UI updating from the actual data parse"""
 
         totalPoints = 0
         # starts total point counter at 0
@@ -3582,8 +3620,8 @@ class tepmWindow(QWidget):
                     checkLive = True
                     # sets the checkLive boolean to true, so the status will be re-checked
 
-            if caseName and ((caseName not in self.pastChannels) or checkLive):
-            # if the channel is real and isn't listed in the previous channels, or it's been 30 minutes
+            if caseName and ((caseName not in self.pastChannels) or checkLive or (caseName != self.currentChannel)):
+            # if the channel is real and isn't listed in the previous channels, or it's been 15 minutes, or the name doesn't match the current channel
                 caseNameDict = streakGrabber(self.state, caseName, None)
                 # gets the return dictionary
                 if caseNameDict["success"]:
@@ -3606,11 +3644,8 @@ class tepmWindow(QWidget):
                     isLive = False
                     # defaults to False (offline)
 
-                liveMatch = bool((self.pastChannels.get(caseName, {"live": False}).get("live", False)) == isLive)
-                # stores a boolean for if the previous live state matches the current one
-
-                if not liveMatch or caseName not in self.pastChannels:
-                # if the live status doesn't match stored, or the channel hasn't yet been stored
+                if caseName not in self.pastChannels or checkLive:
+                # if the live status doesn't match stored, the channel hasn't yet been stored, or it's been long enough to trigger an update
                     liveDetailsDict = liveDetailGrabber(self.state, caseName)
                     # makes a request to get the livestream details
 
@@ -3635,38 +3670,34 @@ class tepmWindow(QWidget):
                             # sets offline string with game and streak
                     else:
                     # not successful
-                        statusString = f"({caseStreak})"
-                        # just the streak number (or N/A if that fails, too)
-                    self.predictChannelStatus.setText(statusString)
-                    # changes the status text
+                        statusString = f"N/A"
+                        # just N/A (not available)
                 else:
                 # if the live has already been stored
                     statusString = self.pastChannels[caseName]["status"]
                     # grabs the old one from cache
                 
-                self.pastChannels[caseName] = {"streak": caseStreak, "live": isLive, "timestamp": time.time(), "active": True, "status": statusString}
+                activeStatus = self.pastChannels.get(caseName, {"active": True}).get("active")
+                # grabs the previously stored status (True/False, if none is set, defaults to True)
+                
+                self.pastChannels[caseName] = {"streak": caseStreak, "live": isLive, "timestamp": time.time(), "active": activeStatus, "status": statusString}
                 # adds both to map, adds timestamp for check, adds boolean for activity and the status string
+
+                self.predictChannelStatus.setText(self.pastChannels[caseName]["status"])
+                # loads the last stored status
 
             if caseName and (caseName != self.currentChannel):
             # if the case sensitive name is set and it's not the same as the currently displayed channel
-                activeStatus = self.pastChannels[caseName]["active"]
-                # gets the active status
-                if not activeStatus and self.pastChannels.get("swap", False):
-                # if the active status is false (meaning it's been removed) and there's a request to swap the channel
-                    self.pastChannels[caseName]["timestamp"] = 0
-                    # sets the timestamp to 0, so that the liveCheck gets triggered next cycle, refreshing all data
-                    self.pastChannels[caseName]["active"] = True
-                    # sets the active boolean to True, so that the predictUI check can add it to the active list, enabling all the relevant buttons
-                    self.pastChannels["swap"] = False
-                    # disables the swap command
                 self.currentChannel = caseName
-                # updates the internal name scheme
-                if caseName in self.pastChannels:
-                # if the channel has been stored already
-                    self.predictChannelStatus.setText(self.pastChannels[caseName]["status"])
-                    # changes the status text to match the stored one (since this is most likely after a swap, ensures the status gets swapped, too)
-                self.predictUI("Check")
-                # calls the predict UI function with "check" to change the button states
+                # updates the class-stored channel name
+                if not self.pastChannels[caseName]["active"] and self.pastChannels["swap"]:
+                # if the channel has been "disabled" and there's a swap request (previous/next/etc)
+                    self.pastChannels[caseName]["active"] = True
+                    # sets to True (if it gets triggered here, it's a new channel or been manually navigated to after being disabled, re-enables)
+                    self.pastChannels["swap"] = False
+                    # disables the swap request to prevent re-trigger
+                self.predictUIsignal.emit("Check")
+                # calls the predict UI function with "check" to change the navigation button states
 
             if (oldID == eventID) and (oldType == eventType):
             # if the IDs match and the types match (same dictionary)
@@ -3686,19 +3717,32 @@ class tepmWindow(QWidget):
 
             ownVoteID = prediction["votedOutcome"]
             # gets the outcome user (may have) voted for
-            ownVoteSum = prediction.get("votedSum", 0)
+            ownVoteSum = prediction.get("votedSum", None)
             # gets the amount user (may have) voted with
-            ownVoteWin = prediction.get("sumWon", 0)
+            ownVoteWin = prediction.get("sumWon", None)
             # gets the total won points (null until resolved)
             storedVoteDict = self.predictionNumbers.get(eventID, {"bet": 999999})
-            # grabs the stored dictionary from prediction numbers (falls back to dict with bet = 999999 if it doesn't exist)
+            # grabs the stored dictionary from prediction numbers (falls back to dict with bet = 999,999 if it doesn't exist, since that can never match)
 
-            if not (ownVoteSum == storedVoteDict["bet"]):
-            # if the vote sum doesn't match the previously stored vote
+            if self.autoBetBool:
+            # if the auto-bet subprocess is in the need of new data (first start)
+                ctrl.autoBetDataSignal.emit({"channel": caseName, "balance": self.predictChannelPoints, "pointsName": pointsString})
+                # sends a small dictionary with essential info
+                self.autoBetBool = False
+                # turns off to stop sending data
+
+            if not (ownVoteSum == storedVoteDict.get("bet", None)) and ownVoteSum:
+            # if the vote sum doesn't match the previously stored vote (and the bet is valid, sometimes Twitch drops it -> null)
                 shouldUpdate = True
                 # sets the boolean to True so the UI gets fully updates
                 self.predictionNumbers[eventID] = {"bet": ownVoteSum, "option": ownVoteID, "balance": self.predictChannelPoints}
                 # stores the bet, voted outcome and current balance in the dictionary with the eventID as key
+                ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": ownVoteSum})
+                # sends a signal to the auto-bet function to prevent double bets (manual bets override)
+            elif not self.predictionNumbers.get(eventID, False):
+            # if there's nothing stored yet
+                self.predictionNumbers[eventID] = {}
+                # makes a new map (this is so it can generate *a* map for all the outcomes below)
 
             if shouldUpdate:
             # if there's new data (hides these to reset button count)
@@ -3715,8 +3759,8 @@ class tepmWindow(QWidget):
 
                     localTime = prediction["localTS"]
                     # grabs the local timestamp (still in datetime format)
-                    timer = int((prediction["timer"]) - 2)
-                    # grabs the prediction timer (-2 due to delay)
+                    timer = int((prediction["timer"]) + 2)
+                    # grabs the prediction timer (+2 due to Twitch compensating)
                     self.timerEnd = localTime + datetime.timedelta(seconds=timer)
                     # calculates the end of the timer, stores in self
                     self.labelTimer = QTimer()
@@ -3761,7 +3805,7 @@ class tepmWindow(QWidget):
                 # updates the bet label to empty
 
             if shouldUpdate or eventType == "active":
-            # if there's an update request (new channel, changes) or the event is active
+            # if there's an update request (new channel, changes) or the event is active (since the widgets need to be updated with new data)
                 for x in range(len(outcomes)):
                 # goes through each outcome again (needs to do it 2x because first need the total points for labeling)
                     optionPoints = outcomes[x]["totalPoints"]
@@ -3775,6 +3819,8 @@ class tepmWindow(QWidget):
                 # starts a counter for buttons
                 outcomesList = []
                 # empty list of outcome titles
+                outcomeIDlist = []
+                # empty list of outcome IDs
 
                 for x in range (len(outcomes)):
                 # goes through each option
@@ -3785,6 +3831,9 @@ class tepmWindow(QWidget):
 
                     optionID = outcomes[x]["id"]
                     # gets the outcome ID
+                    outcomeIDlist.append(optionID)
+                    # adds to list
+
                     if ownVoteID == optionID:
                     # if the user vote matches this vote
                         balanceRatio = ((ownVoteSum / (self.predictionNumbers.get(eventID, {"balance": 0}).get("balance", 0) + ownVoteSum)) * 100)
@@ -3931,10 +3980,22 @@ class tepmWindow(QWidget):
 
                         if ownVoteID:
                         # if user voted
+                            if ownVoteSum:
+                            # if there's a stored amount for the bet
+                                pass
+                                # doesn't do anything (it's already good)
+                            else:
+                            # sometimes, the own vote doesn't get pulled when the prediction is resolved (Twitch's end, not my fault)
+                                ownVoteSum = self.predictionNumbers[eventID]["bet"]
+                                # grabs it from the stored map instead
                             betWin = ((ownVoteSum * self.predictionNumbers[eventID][ownVoteID]["payout"]) - ownVoteSum)
                             # gets the potential bet win by taking the user vote, multiplying with the payout for that option and subtracting own vote
                             betString = f'You bet {ownVoteSum:,.0f} on "{self.predictionID[eventID]["title"].strip()}"\n(+{betWin:,.0f} on win)'
                             # forms a string to indicate bet
+                            if not self.predictionNumbers[eventID].get("winPoints", False):
+                            # if there's not a stored info for points to win yet
+                                self.predictionNumbers[eventID]["winPoints"] = betWin
+                                # stores the potential win points in the map (safeguard)
                             self.betLabelUpdater(betString, "Green")
                             # sets text to match
                             self.predictButtonManager("Vote", self.predictionKeys[eventID][ownVoteID])
@@ -3964,6 +4025,14 @@ class tepmWindow(QWidget):
                             # if the stored outcome is the same as the winner
                                 self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
                                 # text if user bet and won
+                                if ownVoteWin:
+                                # if the variable is defined
+                                    pass
+                                    # does nothing
+                                else:
+                                # not defined
+                                    ownVoteWin = self.predictionNumbers[eventID].get("winPoints", ownVoteSum)
+                                    # uses the stored amount (if one is set, otherwise defaults to the vote, which will result in 0 visually, but won't crash)
                                 newPoints = (ownVoteWin - ownVoteSum)
                                 # gets the amount of points won (gained)
                                 winString = f"You won {ownVoteWin:,.0f} {pointsString} with a bet of {ownVoteSum:,.0f} {pointsString}! (+{(newPoints):,.0f})"
@@ -4049,6 +4118,9 @@ class tepmWindow(QWidget):
 
                                     self.pastPredictions[pastEventID] = {"channel": self.currentChannel, "title": title, "timestamp": chartStampRaw, "outcomes": outcomesList, "winner": oldOutcomeID, "balance": "ignore", "bet": ownVoteSum, "W/L": winState, "gain": newPoints}
                                     # stores the event details with vote details
+
+            self.pastChannels["visible"] = caseName
+            # sets the current channel to be the "visible" one
                         
         else:
         # if it wasn't a success (usually a stream with no prior history)
@@ -4063,37 +4135,43 @@ class tepmWindow(QWidget):
                 errorMsg = "No previous predictions found! Try a different channel"
                 # overrides error message
 
-            self.predictionUserInform(f"Failed to get prediction details for {predictChannel}!\n({errorMsg})")
+            if self.pastChannels.get("visible", "305-14i0tjnsbekt-2-492q") in [predictChannel, self.currentChannel]:
+            # if the currently/last visible channel is/was this channel or the previous (uses a fallback of absolute gibberish to avoid accidentally matching)
+                errorMsg = "Windows network error, please wait..."
+                # does nothing, uses preset error message
+            else:
+            # if not, sets empty UI instead
+                self.maxBetButton.setEnabled(False)
+                self.defaultBetButton.setEnabled(False)
+                self.predictBetButton.setEnabled(False)
+                self.predictAmountLine.setEnabled(False)
+                # disables the betting buttons
+
+                self.predictChannelLabel.setText(predictChannel)
+                # sets the label to match given channel
+                self.predictLabelUpdater("No prediction", " ", " ", "Red")
+                # sets empty labels
+                self.betLabelUpdater(" ")
+                # sets empty bet
+                self.predictPoolLabel.setText(" ")
+                # empties the pool label
+
+                for widget in self.predictOutcomeWidgets:
+                # goes through every outcome widget
+                    widget.hide()
+                    # hides it
+                self.predictOutcome1.show()
+                # shows only the first one
+
+                self.predictPayout1.setText("0.00x")
+                # sets placeholder payout label
+                self.predictOption1.setText("Nonexistent Option")
+                # sets empty bet button name
+                self.predictPoints1.setText(f"0 Points\n(100%)\n0 users")
+                # sets placeholder pool label for the first widget
+
+            self.predictionUserInformSignal.emit(f"Failed to get prediction details for {predictChannel}!\n({errorMsg})")
             # changes the text to inform (includes error message)
-
-            self.maxBetButton.setEnabled(False)
-            self.defaultBetButton.setEnabled(False)
-            self.predictBetButton.setEnabled(False)
-            self.predictAmountLine.setEnabled(False)
-            # disables the betting buttons
-
-            self.predictChannelLabel.setText(predictChannel)
-            # sets the label to match given channel
-            self.predictLabelUpdater("No prediction", " ", " ", "Red")
-            # sets empty labels
-            self.betLabelUpdater(" ")
-            # sets empty bet
-            self.predictPoolLabel.setText(" ")
-            # empties the pool label
-
-            for widget in self.predictOutcomeWidgets:
-            # goes through every outcome widget
-                widget.hide()
-                # hides it
-            self.predictOutcome1.show()
-            # shows only the first one
-
-            self.predictPayout1.setText("0.00x")
-            # sets placeholder payout label
-            self.predictOption1.setText("Nonexistent Option")
-            # sets empty bet button name
-            self.predictPoints1.setText(f"0 Points\n(100%)\n0 users")
-            # sets placeholder pool label for the first widget
 
 
 
@@ -4148,20 +4226,20 @@ class tepmWindow(QWidget):
 
         if eventType == "locked":
         # if the event is locked
-            self.predictionUserInform(f"Cannot bet on a closed prediction!")
+            self.predictionUserInformSignal.emit(f"Cannot bet on a closed prediction!")
             # user inform
             return
             # stops
         elif eventType == "resolved":
         # if the event is resolved (paid out)
-            self.predictionUserInform(f"Cannot bet on a paid out prediction!")
+            self.predictionUserInformSignal.emit(f"Cannot bet on a paid out prediction!")
             # user inform
             return
             # stops
 
         if not selectedButton or not bet:
         # if either option is not set
-            self.predictionUserInform("No bet set or outcome selected, please try again!")
+            self.predictionUserInformSignal.emit("No bet set or outcome selected, please try again!")
             # sets error text
         else:
         # if both are set successfully
@@ -4200,7 +4278,7 @@ class tepmWindow(QWidget):
                     # sends the bet with the current bet ID instead (overrides the selected button, in case there's none)
             else:
             # if it wasn't defined (either didn't get set properly or failed to grab)
-                self.predictionUserInform(f"Failed to send bet due to internal error!")
+                self.predictionUserInformSignal.emit(f"Failed to send bet due to internal error!")
                 # user inform
 
 
@@ -4227,17 +4305,17 @@ class tepmWindow(QWidget):
                     # grabs the stored dictionary for the event (if none exists, sets a false default)
                     if stored["id"]:
                     # if there's already a voted outcome
-                        self.predictionUserInform(f"Can't select an outcome with an active bet!")
+                        self.predictionUserInformSignal.emit(f"Can't select an outcome with an active bet!")
                         # user inform
                     else:
                     # no voted outcome
                         selectedButton.setChecked(True)
                         # sets that button as checked
-                        self.predictionUserInform(f"Selected outcome {button}!")
+                        self.predictionUserInformSignal.emit(f"Selected outcome {button}!")
                         # user inform
                 else:
                 # button not visible (can't vote for that)
-                    self.predictionUserInform(f"Can't select an outcome that's not available!")
+                    self.predictionUserInformSignal.emit(f"Can't select an outcome that's not available!")
                     # user inform
 
 
@@ -4332,13 +4410,13 @@ class tepmWindow(QWidget):
                 # a mod
             else:
             # user is not a mod
-                self.predictionUserInform("No moderator status in this channel")
+                self.predictionUserInformSignal.emit("No moderator status in this channel")
                 # no mod inform
                 return False
                 # not a mod
         else:
         # operation not successful
-            self.predictionUserInform("Could not get moderator status, can't open view")
+            self.predictionUserInformSignal.emit("Could not get moderator status, can't open view")
             # user inform
             return False
             # something went wrong, can't auth
@@ -4383,7 +4461,7 @@ class tepmWindow(QWidget):
                     # calculates the bet if doubled
                     if (doubleBet > currentBal) or (doubleBet > 250000):
                     # if the double bet is more than current balance or more than 250k (twitch max)
-                        self.predictionUserInform("Cannot double points exceeding balance or max!")
+                        self.predictionUserInformSignal.emit("Cannot double points exceeding balance or max!")
                         # user inform
                     else:
                     # if not
@@ -4397,18 +4475,18 @@ class tepmWindow(QWidget):
             # bet is 0
                 if action == "Halve":
                 # halve request
-                    self.predictionUserInform("Cannot halve 0 points!")
+                    self.predictionUserInformSignal.emit("Cannot halve 0 points!")
                     # user inform
                 else:
                 # double request
-                    self.predictionUserInform("Cannot double 0 points!")
+                    self.predictionUserInformSignal.emit("Cannot double 0 points!")
                     # user inform
                 return
                 # stop
 
         if currentBet == 0 and (action not in ["Max", "Default", "Quick"]):
         # if the bet is 0, and it's not a Max/Default/Quick (those set the points after)
-            self.predictionUserInform("Cannot bet 0 points")
+            self.predictionUserInformSignal.emit("Cannot bet 0 points")
             # user inform
             return False
             # stops
@@ -4460,14 +4538,22 @@ class tepmWindow(QWidget):
 
             if action == "Quick":
             # if it's a quick-bet
-                self.predictIntermediary()
-                # calls the intermediary to make a bet with newly formed bet
+                eventType = self.predictionID["lastType"]
+                # grabs the current event type (active, locked, resolved)
+                if eventType == "active":
+                # if the prediction type is active (open)
+                    self.predictIntermediary()
+                    # calls the intermediary to make a bet with newly formed bet
+                else:
+                # locked/resolved/none
+                    self.predictionUserInformSignal.emit("Can't bet on a locked/resolved prediction!")
+                    # user inform
 
         else:
         # if it doesn't call for max/default
             if currentBet > currentBal:
             # if the bet is larger than the current balance
-                self.predictionUserInform("Bet cannot exceed balance!")
+                self.predictionUserInformSignal.emit("Bet cannot exceed balance!")
                 # user inform
                 self.predictAmountLine.setText(f"{currentBal}")
                 # enforces the max bet
@@ -4649,11 +4735,11 @@ class tepmWindow(QWidget):
         self.predictInformTimer = QTimer()
         # makes a QTimer
         self.predictInformTimer.timeout.connect(lambda: self.predictTaskLabel.setText(" "))
-        # when the timer is up, resets the text
+        # when the timer is up, resets the text (hides)
         self.predictInformTimer.setSingleShot(True)
         # only runs once
-        self.predictInformTimer.start(5000)
-        # sets the timer to last 5 seconds
+        self.predictInformTimer.start(3500)
+        # sets the timer to last 3.5 seconds
 
 
 
@@ -5068,8 +5154,12 @@ def pointGrabber(state, channel: str) -> dict:
             # grabs the actual points (returns 0 if none found)
             caseName = data["data"]["community"]["displayName"]
             # stores the case sensitive name (visual thing)
-            pointsName = data["data"]["community"]["channel"]["communityPointsSettings"]["name"]
-            # gets the name of the channel points
+            pointsName = data["data"]["community"]["channel"]["communityPointsSettings"].get("name", "points")
+            # gets the name of the channel points (defaults to points if none found)
+            if pointsName == "" or not pointsName:
+            # if the points are empty
+                pointsName = "points"
+                # defaults to points again
             try:
                 return {"success": True, "error": "None", "points": points, "caseName": caseName, "pointsName": pointsName}
                 # returns a dictionary with the formatted name
@@ -5117,7 +5207,7 @@ def streakGrabber(state, channel: str, channelID:str = None) -> dict:
             # grabs the channel ID
     
     if channelID != None:
-    # if the channelID is now not None
+    # if the channelID is (now) not None
         payload = {
         # forms a payload from the required information
             "operationName": hashMap["Streak Operation"],
@@ -6303,6 +6393,8 @@ class PredictionWorker(QObject):
                 # sets info text
             ctrl.mainWindow.predictAmountLine.setText("")
             # clears the text
+            ctrl.predictionTimerOverride.emit()
+            # signals the prediction thread to skip waiting and immediately return data (to update UI faster)
         else:
         # if the return isn't a success
             err = betInfo["error"]
@@ -6327,8 +6419,6 @@ class PredictionWorker(QObject):
 class ModWindow(QObject):
     """A class to handle the moderator window"""
 
-    dataSignal = pyqtSignal()
-    """A pyQt signal to send data back to handler function"""
     stopSignal = pyqtSignal()
     """A pyQt signal to indicate the worker task should end"""
 
@@ -6339,6 +6429,15 @@ class ModWindow(QObject):
         # stores the appState in self
         self.running = True
         # sets the running status to True
+        self.stopSignal.connect(self.stopper)
+        # connects the stop signal to the stopper function
+
+### Stopper ###
+    
+    def stopper(self, stop:bool):
+        """Function to stop the moderator view"""
+        if stop:
+            print("A")
 
 ### Manage Prediction ###
 
@@ -6404,8 +6503,6 @@ class ModWindow(QObject):
 class HelpWindow(QObject):
     """A class to handle the help window"""
 
-    dataSignal = pyqtSignal()
-    """A pyQt signal to send data back to handler function"""
     stopSignal = pyqtSignal()
     """A pyQt signal to indicate the worker task should end"""
 
@@ -6416,6 +6513,8 @@ class HelpWindow(QObject):
         # stores the appState in self
         self.running = True
         # sets the running status to True
+        self.callStop = False
+        # boolean to check if the window should be stopped
 
         self.stopSignal.connect(self.stopper)
         # connects the stop signal to the stopper
@@ -6432,8 +6531,12 @@ class HelpWindow(QObject):
             # terminates
             self.helpWindowSP.kill()
             # kills
-        self.helpWindowSP = subprocess.Popen([helpWindowPath], cwd=directory, stdin=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        # opens the help window exe, passes the current working directory and allows input
+        if not self.callStop:
+        # if the stop boolean is False
+            self.helpWindowSP = subprocess.Popen([helpWindowPath, str(os.getpid())], cwd=directory, stdin=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # opens the help window exe, passes the current working directory and allows input
+        self.callStop = False
+        # sets to false to allow next window open
 
 ### Stop Help Worker ###
 
@@ -6441,6 +6544,10 @@ class HelpWindow(QObject):
         """Function to stop the worker"""
         self.running = False
         # sets running status to False, stops running
+        self.callStop = True
+        # sets call stop to True
+        self.run()
+        # runs the runner with True to stop the window
 
 ### Life Check ###
 
@@ -6448,7 +6555,7 @@ class HelpWindow(QObject):
         """Function to check if the window is still alive"""
         if self.helpWindowSP.poll() is not None:
         # polls if the window is still alive (not alive if this is True)
-            self.stopper()
+            self.stopper(False)
             # calls the stop function
             ctrl.helpStoppedSignal.emit()
             # sends a signal to inform the window is stopped
@@ -6464,8 +6571,6 @@ class HelpWindow(QObject):
 class HistoryWindow(QObject):
     """A class to handle the history window"""
 
-    dataSignal = pyqtSignal()
-    """A pyQt signal to send data back to handler function"""
     stopSignal = pyqtSignal()
     """A pyQt signal to indicate the worker task should end"""
 
@@ -6476,6 +6581,8 @@ class HistoryWindow(QObject):
         # stores the appState in self
         self.running = True
         # sets the running status to True
+        self.callStop = False
+        # boolean to check if the window should stop
 
         self.stopSignal.connect(self.stopper)
         # connects the stop signal to the stopper
@@ -6492,8 +6599,12 @@ class HistoryWindow(QObject):
             # terminates
             self.historyWindowSP.kill()
             # kills
-        self.historyWindowSP = subprocess.Popen([historyWindowPath], cwd=directory, stdin=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        # opens the history window exe, passes the current working directory and allows input
+        if not self.callStop:
+        # if the stop bool is false
+            self.historyWindowSP = subprocess.Popen([historyWindowPath, str(os.getpid())], cwd=directory, stdin=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # opens the history window exe, passes the current working directory and allows input
+        self.callStop = False
+        # sets to false to allow next window open
 
 ### Stop History Worker ###
 
@@ -6501,6 +6612,10 @@ class HistoryWindow(QObject):
         """Function to stop the worker"""
         self.running = False
         # sets running status to False, stops running
+        self.callStop = True
+        # sets call stop to True
+        self.run()
+        # runs the runner with True to stop the window
 
 ### Life Check ###
 
@@ -6524,8 +6639,6 @@ class HistoryWindow(QObject):
 class DetailsWindow(QObject):
     """A class to handle the details window"""
 
-    dataSignal = pyqtSignal()
-    """A pyQt signal to send data back to handler function"""
     stopSignal = pyqtSignal()
     """A pyQt signal to indicate the worker task should end"""
 
@@ -6536,6 +6649,8 @@ class DetailsWindow(QObject):
         # stores the appState in self
         self.running = True
         # sets the running status to True
+        self.callStop = False
+        # boolean to check if the window should stop
 
         self.stopSignal.connect(self.stopper)
         # connects the stop signal to the stopper
@@ -6552,8 +6667,13 @@ class DetailsWindow(QObject):
             # terminates
             self.displayWindowSP.kill()
             # kills
-        self.displayWindowSP = subprocess.Popen([detailWindowPath], cwd=directory, stdin=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-        # opens the prediction display window exe, passes the current working directory and allows input
+        if not self.callStop:
+        # if the stop boolean is false
+            self.displayWindowSP = subprocess.Popen([detailWindowPath, str(os.getpid())], cwd=directory, stdin=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # opens the prediction display window exe, passes the current working directory and allows input
+
+        self.callStop = False
+        # sets to false to allow next window open
 
 ### Stop Details Worker ###
 
@@ -6561,6 +6681,10 @@ class DetailsWindow(QObject):
         """Function to stop the worker"""
         self.running = False
         # sets running status to False, stops running
+        self.callStop = True
+        # sets call stop to True
+        self.run()
+        # runs the runner with True to stop the window
 
 ### Handle Input ###
 
@@ -6588,6 +6712,476 @@ class DetailsWindow(QObject):
         # if it can't reach the window (it's gone)
             self.stopper()
             # calls the stop window
+
+
+
+
+
+### Auto-Bet Window Class ###
+
+class AutoBetWindow(QObject):
+    """A class to handle the auto-bet window"""
+
+    stopSignal = pyqtSignal()
+    """A pyQt signal to indicate the worker task should end"""
+    openPrediction = pyqtSignal(dict)
+    """A pyQt signal to send the prediction details from the while loop to the bet handler"""
+    betStartSignal = pyqtSignal()
+    """A pyQt signal to start the auto-bet checking"""
+
+    def __init__(self, state):
+        super().__init__()
+
+        self.state = state
+        # stores the appState in self
+        self.running = True
+        # sets the running status to True
+
+        self.betStartSignal.connect(self.autoBetCheckThread)
+        # connects the start signal to the checker function
+        self.stopSignal.connect(self.stopper)
+        # connects the stop signal to the stopper
+        ctrl.autoBetDataSignal.connect(self.autoBetInput)
+        # connects the auto-bet data signal to the stopper (main -> ctrl -> here -> auto-bet window)
+        self.openPrediction.connect(self.autoBetHandler)
+        # connects the prediction open signal to the betting function
+        ctrl.autoBetLifeSignal.connect(self.lifeCheck)
+        # connects the life signal to the lifecheck function
+        ctrl.eventHandlerSignal.connect(self.pastEventsHandler)
+        # connects the event handler signal to the function
+
+    ### Self Variables ###
+
+        self.selectedChannel = None
+        """Channel to auto-bet on"""
+        self.selectedBalance = 0
+        """Balance of the selected channel"""
+        self.selectedPoints = None
+        """Name of the points used by selected channel"""
+        self.targetOutcomes = []
+        """A list of outcomes to target by name"""
+        self.betSize = None
+        """The size of the bet to place on auto-bet (int/"Default")"""
+        self.fallbackOutcomeFull = None
+        """The fallback outcome to use (1-10, int)"""
+        self.fallbackOutcomeMin = None
+        """The fallback outcome to use if there's not enough outcomes (1 or 2)"""
+        self.pastEvents = {}
+        """Prediction history for auto-better"""
+        self.betLock = threading.Lock()
+        """A lock to prevent multi-access to while loop"""
+        self.refresh = threading.Event()
+        """A threading event to wait out a timer unless skipped"""
+        self.betStatus = False
+        """Boolean that stores whether auto-betting is currently on or not"""
+        self.callStop = False
+        """Boolean to check if a stop has been called"""
+
+### Run Auto-Bet Worker ###
+
+    def run(self):
+        """Function that runs the auto-bet window"""
+        if hasattr(self, "autoBetWindowSP") and self.autoBetWindowSP.poll() is None:
+        # checks if the window is already running and defined
+            self.autoBetWindowSP.terminate()
+            # terminates
+            self.autoBetWindowSP.kill()
+            # kills
+        if not self.callStop:
+        # if the stop boolean is false
+            self.autoBetWindowSP = subprocess.Popen([autoBetWindowPath, str(os.getpid())], cwd=directory, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            # opens the auto-bet window exe, passes the current working directory and allows input
+            ctrl.mainWindow.sendAutoBetData.emit()
+            # sends a signal requesting for new data from main
+            self.outputManagerThread()
+            # calls the thread manager to make a thread for output capture
+        self.callStop = False
+        # sets to false to allow next window open
+
+### Stop Auto-Bet Worker ###
+
+    def stopper(self):
+        """Function to stop the worker"""
+        self.running = False
+        # sets running status to False, stops running
+        self.callStop = True
+        # sets call stop to True
+        self.run()
+        # runs the runner with True to stop the window
+
+### Life Check ###
+
+    def lifeCheck(self):
+        """Function to check if the window is still alive"""
+        if self.autoBetWindowSP.poll() is not None:
+        # polls if the window is still alive (not alive if this is True)
+            self.stopper()
+            # calls the stop function
+            ctrl.autoBetStoppedSignal.emit()
+            # sends a signal to inform the window is stopped
+            return
+            # stops running it
+
+### Handle Input ###
+
+    def autoBetInput(self, inputDict: dict=None):
+        """Function to manage the auto-bet window input"""
+
+        if self.autoBetWindowSP.poll() is not None:
+        # polls if the window is still alive (not alive if this is True)
+            self.stopper()
+            # calls the stop function
+            ctrl.autoBetStoppedSignal.emit()
+            # sends signal to inform the window is stopped
+            return False
+            # stops running
+        
+        if inputDict:
+        # if a dictionary is passed (and not just checked by auto-better)
+            try:
+            # if the window is alive, tries to send data (try in case the connection fails)
+                self.autoBetWindowSP.stdin.write(json.dumps(inputDict) + "\n")
+                # writes the packet to the display window program (sends)
+                self.autoBetWindowSP.stdin.flush()
+                # ensures all messages are sent
+            except:
+            # if it can't reach the window (it's gone)
+                self.stopper()
+                # calls the stop function
+        else:
+        # if none is passed (check by auto-better)
+            return True
+            # returns True (still active)
+            
+### Handle Output ###
+
+    def autoBetOutput(self, outputDict: dict):
+        """Function to manage the auto-bet window output"""
+        # this is only sent when an auto-bet ruleset is defined and confirmed
+
+        if outputDict["stop"]:
+        # if the stop is set to True
+            ctrl.taskChange.emit("Stopping auto-better...")
+            # user inform
+            self.betStatus = False
+            # sets status to False (off)
+            ctrl.autoBetDataSignal.emit({"status": self.betStatus})
+            # tells the auto-bet window what the current status is
+            return
+            # stops running this function
+
+        if outputDict["newChannel"]:
+        # if there's a new channel request instead
+            ctrl.taskChange.emit(f"Checking data for {outputDict["newChannel"]}...")
+            # user inform
+            newChannelData = pointGrabber(self.state, outputDict["newChannel"])
+            # calls the point grabber to try and get both the balance and case-sensitive name
+            if newChannelData["success"]:
+            # successful data grab
+                caseName = newChannelData["caseName"]
+                # grabs the case-sensitive version
+                if caseName:
+                # if it's valid
+                    self.selectedChannel = caseName
+                    # sets the selected channel
+                else:
+                    self.selectedChannel = outputDict["newChannel"]
+                    # uses the user-defined one instead
+                ctrl.taskChange.emit(f"Sending {self.selectedChannel} data for auto-bet...")
+                # user inform
+                inputDict = {"channel": self.selectedChannel, "balance": newChannelData["points"], "pointsName": newChannelData["pointsName"]}
+                # forms a dictionary from the return
+                ctrl.autoBetDataSignal.emit(inputDict)
+                # calls the input function to pass the dictionary
+            else:
+            # unsuccessful
+                ctrl.taskChange.emit(f"Couldn't get data for {outputDict["newChannel"]} due to {newChannelData["error"]}")
+                # user inform with error
+                return
+                # stops running this function
+            outputChannel = self.selectedChannel
+            # sets the variable to match
+        else:
+        # if there's not a new channel, just checks the current channel
+            outputChannel = outputDict["channel"]
+            # stores the output dictionary's passed channel in a temp variable for QoL
+            self.targetOutcomes = outputDict.get("targetOutcomes", [])
+            # grabs the targeted outcomes list, stores in self
+            self.betSize = outputDict["betSize"]
+            # grabs the size of the bet to set (int or "default")
+            self.fallbackOutcomeFull = outputDict.get("fallbackOutcomeFull", None)
+            # grabs the fallback outcome to set (1-10)
+            self.fallbackOutcomeMin = outputDict.get("fallbackOutcomeMin", None)
+            # grabs the last fallback outcome to set if can't use full (1-2)
+
+        if outputDict["type"] == "swap":
+        # if the type is a swap
+            ctrl.taskChange.emit(f"Swapping auto-bet channel to {outputChannel}...")
+            # user inform
+            self.betStatus = False
+            # ensures the betting isn't on yet (no set rules)
+        elif outputDict["type"] == "rules":
+        # if the type is a rule-definition
+            if self.betStatus:
+            # if it's already on
+                ctrl.taskChange.emit(f"Updating auto-bet rules for {outputChannel}...")
+                # user inform with confirmation of "update"
+            else:
+            # betting is now being enabled
+                ctrl.taskChange.emit(f"Starting auto-better for {outputChannel}...")
+                # more generic user inform
+                self.betStatus = True
+                # sets to True to show it's enabled
+                self.betStartSignal.emit()
+                # sends a start signal
+                self.refresh.set()
+                # sets an event to get new prediction data (new channel) right away
+
+        self.selectedChannel = outputChannel
+        # grabs the targeted channel, stores in self
+        ctrl.autoBetDataSignal.emit({"status": self.betStatus})
+        # tells the auto-bet window what the current status is
+
+### Output Manager Thread ###
+
+    def outputManagerThread(self):
+        """Thread manager for stdout -> bet"""
+        if not getattr(self, "outputThread", None):
+        # ensures more than one thread isn't made (since the signal can be sent multiple times)
+            self.outputThread = threading.Thread(
+                # makes a thread just for the output manager
+                target=self.outputManager,
+                daemon=True
+            )
+            self.outputThread.start()
+            # starts the thread
+
+### Output Manager ###
+
+    def outputManager(self):
+        """Function to read the stdout"""
+        while self.running:
+        # while this class is active
+            output = self.autoBetWindowSP.stdout.readline()
+            # grabs the output (dictionary) from the auto-bet window
+            if not output:
+            # if there's nothing
+                break
+                # stops loop
+            try:
+            # tries to...
+                outputDict = json.loads(output)
+                # convert the output into a dictionary
+            except:
+            # in case of error
+                ctrl.taskChange.emit("Could not convert dictionary from auto-bet!")
+                # user inform
+            self.autoBetOutput(outputDict)
+            # passes the dictionary to the output
+
+### Prediction Check Thread ###
+
+    def autoBetCheckThread(self):
+        """Thread manager for autobetchecker"""
+        self.betCheckThread = threading.Thread(
+            # makes a thread just for the auto bet checker
+            target=self.autoBetChecker,
+            name="AutoBetCheckThread",
+            daemon=True
+        )
+        self.betCheckThread.start()
+        # starts the thread
+
+### Prediction Checker ###
+
+    def autoBetChecker(self):
+        """Function to handle the prediction checking"""
+        while self.running:
+        # while this class is active
+            if not self.betLock.acquire(blocking=False):
+            # if the betLock is in use, this function is already running a different call, if not, grabs the lock
+                return
+                # doesn't proceed
+            self.refresh.wait(timeout=10)
+            # waits 10 seconds, unless there's an event
+            if self.betStatus and self.selectedChannel:
+            # if the auto-betting is enabled and there's a real channel
+                betDict = grabPrediction(self.state, self.selectedChannel)
+                # calls the prediction grabbing function with the selected channel
+                if betDict["success"]:
+                # successful grab
+                    actives = betDict["active"]
+                    # checks the active dictionary entry (list of active events, length 0 or 1)
+                    balDict = pointGrabber(self.state, self.selectedChannel)
+                    # calls the balance grabbing function with the selected channel
+                    if balDict["success"]:
+                    # successful grab
+                        inputDict = {"channel": self.selectedChannel, "balance": balDict["points"], "pointsName": balDict["pointsName"]}
+                        # forms a dictionary from the return
+                        ctrl.autoBetDataSignal.emit(inputDict)
+                        # calls the input function to pass the dictionary, updates UI
+                        if len(actives) > 0:
+                        # if there's at least 1 active prediction (0 / 1)
+                            activePrediction = actives[0]
+                            # grabs the 0th prediction
+                            if not self.pastEvents.get(activePrediction["id"], None):
+                            # if there's an active prediction and there's no record of it yet
+                                activePrediction["balance"] = balDict["points"]
+                                # adds the balance to the active dictionary 
+                                self.openPrediction.emit(activePrediction)
+                                # sends the bet dictionary via a pyqt signal to the bet handler function
+            self.refresh.clear()
+            # clears the event
+            self.betLock.release()
+            # releases the lock, allowing a new instance to run
+
+### Past Events Handler ###
+
+    def pastEventsHandler(self, eventDict: dict):
+        """Function to handle the past events to ensure no duplicate bets are placed"""
+        if not eventDict["eventID"] in self.pastEvents:
+        # checks if the eventID has already been entered into the pastevents (continues if not)
+            self.pastEvents[eventDict["eventID"]] = eventDict["bet"]
+            # stores the bet inside the past events map under the event ID
+
+### Bet Handler ###
+
+    def autoBetHandler(self, predictionDict: dict):
+        """Function to handle automatic bet placing (called when a prediction opens)"""
+
+        running = self.autoBetInput()
+        # calls the bet input to check the state of the window
+
+        if not running or not self.betStatus:
+        # if it's not actually running or the bets are disabled by stop/some other flag
+            return
+            # stops
+
+        outcomeToBet = None
+        # defaults the bettable outcome to nothing
+        outcomeList = []
+        # empty list to store outcome names
+        outcomeIDList = []
+        # empty list to store outcome IDs
+        eventID = predictionDict.get("id", None)
+        # grabs the eventID
+
+        if eventID and eventID in self.pastEvents:
+        # if this event has already been entered once
+            if self.pastEvents[eventID] > 0:
+            # if this event has a bet registered
+                return
+                # stops
+
+        activeOutcomes = predictionDict["outcomes"]
+        # gets all the outcomes
+
+        for x in range(len(activeOutcomes)):
+        # goes through each outcome and its ID
+            outcome = activeOutcomes[x]
+            # gets the xth element of the list (0 to (min 2, max 10))
+            outcomeName = outcome["title"]
+            outcomeID = outcome["id"]
+            # gets the ID and the name of the outcome in question
+            outcomeList.append(outcomeName)
+            outcomeIDList.append(outcomeID)
+            # adds the IDs to the list in order (1-X)
+            if outcomeName.lower().strip() in self.targetOutcomes:
+            # if there's a name-matched outcome with a targeted one (eg. Loss and loss (since it gets lowered/stripped))
+                outcomeToBet = outcomeID
+                # sets the outcome to bet on as the outcome ID matching the name-matched one
+        
+        if not outcomeToBet and len(self.targetOutcomes) > 0:
+        # if an outcome is not yet selected from name matching, and there's at least one target
+            for target in self.targetOutcomes:
+            # goes through every target (name-matching scheme)
+                for outcome in outcomeList:
+                # goes through each outcome name with each target
+                    if target in outcome:
+                    # if there's a partial match (eg. "before" in "loses before HH:MM")
+                        outcomeIndex = outcomeList.index(outcome)
+                        # gets the index of the outcome selected
+                        outcomeToBet = outcomeIDList[outcomeIndex]
+                        # selects the ID "linked" to the outcome in question
+
+        if not outcomeToBet:
+        # if no outcome was defined yet (no name match)
+            if self.fallbackOutcomeFull and self.fallbackOutcomeFull < len(outcomeIDList):
+            # if the fallback outcome (1-10) is set and it's less than the length of the list of outcomes (can be matched)
+                try:
+                # tries to...
+                    outcomeToBet = outcomeIDList[self.fallbackOutcomeFull - 1]
+                    # sets the outcome to bet on as the ID matching the index of the outcome (list, so -1 (because list starts at 0, outcomes at 1))
+                except:
+                # if it fails (something wrong)
+                    pass
+                    # does nothing (gets caught since outcomeToBet is still None)
+            elif self.fallbackOutcomeMin:
+            # if it's not set or there's not enough outcomes
+                try:
+                # tries to...
+                    outcomeToBet = outcomeIDList[self.fallbackOutcomeMin - 1]
+                    # uses the ID matching the index of the outcome
+                except:
+                # if it fails (something wrong)
+                    pass
+                    # does nothing (gets caught since outcomeToBet is still None)
+
+        if not outcomeToBet:
+        # if no outcome is STILL defined (can't fix)
+            ctrl.taskChange.emit("Didn't place bet due to missing outcome match!")
+            # user inform
+        else:
+        # if an outcome is defined
+            if self.betSize:
+            # if the bet size is defined, and isn't None
+                if type(self.betSize) == int:
+                # if it's an integer
+                    betToSet = self.betSize
+                    # the bet to use is that defined integer
+                else:
+                # if it's not an int (it should be a string, "default", otherwise using )
+                    balance = int(predictionDict.get("balance", 0))
+                    # gets the balance from the passed dictionary
+                    if roundBalanceBet:
+                    # if balance rounding is enabled
+                        if stageBetBoolean:
+                        # if staged bets are enabled
+                            if balance >= stageBetBalance:
+                            # if the current balance is greater or equal to the required balance for staged bets
+                                leftover, betToSet = divmod(balance, stageBet)
+                                # performs divmod on the current balance with the stage bet to form a bet
+                            else:
+                                leftover, betToSet = divmod(balance, defaultBet)
+                                # performs divmod on the current balance to form the bet 
+                        else:
+                        # staged bets aren't enabled
+                            leftover, betToSet = divmod(balance, defaultBet)
+                            # performs divmod on the current balance to form the bet
+                    else:
+                    # balance rounding isn't enabled
+                        betToSet = defaultBet
+                        # uses the default bet size
+
+                ctrl.taskChange.emit(f"Auto-betting {betToSet:,.0f} on {self.selectedChannel}...")
+                # user inform
+                QThread.msleep(500)
+                # waits 500ms (small delay)
+                predictionResult = sendPrediction(self.state, betToSet, eventID, outcomeToBet)
+                # sends the prediction details to the betting function
+                if predictionResult["success"]:
+                # if the bet was successful
+                    ctrl.taskChange.emit(f"Successfully bet {betToSet:,.0f} on {self.selectedChannel}!")
+                    # user inform
+                    ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": betToSet})
+                    # adds the event's bet into history to prevent a second bet
+                else:
+                    ctrl.taskChange.emit(f"Failed to place a bet on {self.selectedChannel} due to {predictionResult["error"]}")
+                    # user inform with error message
+            else:
+            # bet size isn't defined/is None
+                ctrl.taskChange.emit("No bet size defined! Can't place prediction")
+                # user inform
 
 
 
@@ -6661,6 +7255,19 @@ class SuperController(QObject):
     historyStoppedSignal = pyqtSignal()
     """A pyQt signal to inform the window has stopped"""
 
+### Auto-Bet Worker ###
+
+    startAutoBetSignal = pyqtSignal()
+    """A pyQt signal to start the auto-bet view"""
+    autoBetStoppedSignal = pyqtSignal()
+    """A pyQt signal to inform the window has stopped"""
+    autoBetLifeSignal = pyqtSignal()
+    """A pyQt signal to poll the status of the auto-bet window"""
+    autoBetDataSignal = pyqtSignal(dict)
+    """A pyQt signal to pass a dictionary of data to the auto-bet view (to update window UI)"""
+    eventHandlerSignal = pyqtSignal(dict)
+    """A pyQt signal to add previous bets to the auto-bet history"""
+
 ### Init ###
 
     def __init__(self):
@@ -6682,7 +7289,6 @@ class SuperController(QObject):
         # calls mainStarter once the start window is done with config
         self.startWindow.starterDone.connect(self.mainContinuer)
         # when the starter is done, signals the next stage (mainWindow -> extractAuthToken)
-
         self.stopPredictionWorker.connect(self.predictionWorkerStop)
         # connects the signal to the function
 
@@ -6710,6 +7316,8 @@ class SuperController(QObject):
         """Boolean to check if moderator window is active"""
         self.startModSignal.connect(self.startModView)
         # connects the starter signal to the function
+        self.modStoppedSignal.connect(self.moderatorWorkerStop)
+        # connects the stop signal to the function
 
     ### History View ###
         
@@ -6718,6 +7326,15 @@ class SuperController(QObject):
         self.startHistorySignal.connect(self.startHistoryView)
         # connects the starter signal to the function
         self.historyStoppedSignal.connect(self.historyWorkerStop)
+        # connects the stop signal to the function
+
+    ### Auto-Bet View ###
+
+        self.autoBetWindowBool = False
+        """Boolean to check if auto-bet window is active"""
+        self.startAutoBetSignal.connect(self.startAutoBetView)
+        # connects the starter signal to the function
+        self.autoBetStoppedSignal.connect(self.autoBetWorkerStop)
         # connects the stop signal to the function
 
 
@@ -6776,12 +7393,12 @@ class SuperController(QObject):
         # boolean is True, meaning it has been defined and is hiding
             self.windowSwap(action)
             # calls the window swap with the action passed
-    
+
 
 
 ### Worker Starter Generic Function ###
 
-    def startWorker(self, workerClass, dataFunction, threadName:str):
+    def startWorker(self, workerClass, threadName:str, dataFunction = None):
         """Shared function to start the different worker classes"""
         
         thread = QThread()
@@ -6805,9 +7422,11 @@ class SuperController(QObject):
         thread.finished.connect(thread.deleteLater)
         # deletes both the thread and the worker when the thread is done
 
-        worker.dataSignal.connect(dataFunction)
-        # connects the passed function (function that handles the next data) to the worker's signal
-        # the class must have a signal called "dataSignal" that connects to this
+        if dataFunction:
+        # if the datafunction is passed
+            worker.dataSignal.connect(dataFunction)
+            # connects the passed function (function that handles the next data) to the worker's signal
+            # the class must have a signal called "dataSignal" that connects to this
 
         thread.start()
         # starts the thread
@@ -6824,10 +7443,10 @@ class SuperController(QObject):
         self.predictWorker, self.predictThread = self.startWorker(
             PredictionWorker,
             # the class to start
-            self.predictionDataGrab,
-            # the data handler
-            "PredictionThread"
+            "PredictionThread",
             # name of the thread
+            self.predictionDataGrab
+            # assigns the data handler
         )
         # calls startWorker with given arguments to start a thread/worker for prediction grabbing 
 
@@ -6866,8 +7485,6 @@ class SuperController(QObject):
         self.detailsWorker, self.detailsThread = self.startWorker(
             DetailsWindow,
             # assigns the class
-            self.detailsData,
-            # assigns the return data handler
             "DetailsThread"
             # names the thread
         )
@@ -6909,8 +7526,6 @@ class SuperController(QObject):
         self.helpWorker, self.helpThread = self.startWorker(
             HelpWindow,
             # assigns the class
-            self.helpData,
-            # assigns the return data handler
             "HelpThread"
             # names the thread
         )
@@ -6932,7 +7547,6 @@ class SuperController(QObject):
             self.helpWorker = None
             # reassigns as None
 
-        
         if hasattr(self, "detailsThread") and self.helpThread:
         # if the thread exists and is defined
             self.helpThread.quit()
@@ -6953,8 +7567,6 @@ class SuperController(QObject):
         self.historyWorker, self.historyThread = self.startWorker(
             HistoryWindow,
             # assigns the class
-            self.historyData,
-            # assigns the return data handler
             "HistoryThread"
             # names the thread
         )
@@ -6962,7 +7574,7 @@ class SuperController(QObject):
 ### History View Worker Stop ###
 
     def historyWorkerStop(self):
-        """Function to stop the help worker thread/class"""
+        """Function to stop the history worker thread/class"""
         if getattr(self, "historyWorker", None):
         # if the worker exists and is defined
             try:
@@ -6989,38 +7601,90 @@ class SuperController(QObject):
 
 
 
+### Auto-Bet View Worker Start ###
+
+    def autoBetWorkerStart(self):
+        """Function to start the auto-bet worker thread/class"""
+        self.autoBetWorker, self.autoBetThread = self.startWorker(
+            AutoBetWindow,
+            # assigns the class
+            "AutoBetThread"
+            # names the thread
+        )
+
+### History View Worker Stop ###
+
+    def autoBetWorkerStop(self):
+        """Function to stop the auto-bet worker thread/class"""
+        if getattr(self, "autoBetWorker", None):
+        # if the worker exists and is defined
+            try:
+            # tries (this crashes annoyingly frequently otherwise)
+                self.autoBetWorker.stopSignal.emit()
+                # sends a signal telling the worker to stop
+            except:
+            # if it can't send the signal
+                pass 
+                # it doesn't actually exist, it just hallucinates
+            self.autoBetWorker = None
+            # reassigns as None
+
+        if getattr(self, "autoBetThread", None):
+        # if the thread exists and is defined
+            self.autoBetThread.requestInterruption()
+            # tells the thread to stop
+            self.autoBetThread.quit()
+            # calls for the thread to quit
+            self.autoBetThread.wait()
+            # waits for the thread to stop
+            self.autoBetThread = None
+            # reassigns as None
+        self.autoBetWindowBool = False
+        # swaps the boolean to False to allow a new window creation
+
+
+
 ### Mod View Worker Start ###
 
     def moderatorWorkerStart(self):
         """Function to start the moderator view worker thread/class"""
-        self.moderatorWorker, self.moderatorThread = self.startWorker()
-        # incomplete
+        self.moderatorWorker, self.moderatorThread = self.startWorker(
+            ModWindow,
+            # assigns the class
+            "ModeratorThread"
+            # names the thread
+        )
+        # starter for moderator view
+
+### Mod View Worker Stop ###
+
+    def moderatorWorkerStop(self):
+        """Function to stop the moderator worker thread/class"""
+        if getattr(self, "moderatorWorker", None):
+        # if the worker exists and is defined
+            try:
+            # tries (this crashes annoyingly frequently otherwise)
+                self.moderatorWorker.stopSignal.emit()
+                # sends a signal telling the worker to stop
+            except:
+            # if it can't send the signal
+                pass 
+                # it doesn't actually exist, it just hallucinates
+            self.moderatorWorker = None
+            # reassigns as None
+
+        if getattr(self, "moderatorThread", None):
+        # if the thread exists and is defined
+            self.moderatorThread.quit()
+            # calls for the thread to quit (stop)
+            self.moderatorThread.wait()
+            # waits for the thread to stop
+            self.moderatorThread = None
+            # reassigns as None
+        self.moderatorWindowBool = False
+        # swaps the boolean to False to allow a new window creation
 
 
-
-### Details Data ###
-
-    def detailsData(self, reply: str):
-        """?"""
-        print(reply)
-
-### Help Data ###
-
-    def helpData(self, reply:str):
-        """?"""
-        print(reply)
-
-### Mod Data ###
-
-    def modData(self, modAction: dict):
-        """Mod data dictionary return reading function"""
-        print(modAction)
-
-### History Data ###
-
-    def historyData(self, reply:str):
-        """?"""
-        print(reply)
 
 ### Prediction Data ###
 
@@ -7265,6 +7929,25 @@ class SuperController(QObject):
             self.taskChange.emit("Opening help window...")
             # user inform
             self.helpWindowBool = True
+            # sets the boolean to True to prevent a new window start
+
+### Auto-Bet View ###
+
+    def startAutoBetView(self):
+        """Function to open the auto-bet config view"""
+        if self.autoBetWindowBool:
+        # if the boolean is already set to True
+            self.autoBetLifeSignal.emit()
+            # runs the lifeCheck function to check the status of the window
+            self.taskChange.emit("Auto-bet window is already active!")
+            # user inform
+        else:
+        # boolean isn't True (yet)
+            self.autoBetWorkerStart()
+            # calls the auto-bet worker to start
+            self.taskChange.emit("Opening auto-bet config window...")
+            # user inform
+            self.autoBetWindowBool = True
             # sets the boolean to True to prevent a new window start
 
 

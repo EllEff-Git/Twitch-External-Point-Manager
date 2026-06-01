@@ -52,7 +52,7 @@ class asyncHelpWindow(QMainWindow):
         # the window title
         self.setWindowIcon(QIcon(self.mainIcon))
         # the window icon
-        self.setFixedSize(QSize(650, 500))
+        self.setFixedSize(QSize(680, 500))
         # the window size
 
     ### UI Elements ###
@@ -75,7 +75,7 @@ class asyncHelpWindow(QMainWindow):
         self.helpLabel.setText("TEPM\n\n"
                             "To vote (bet) on predictions, enter a sum of points to gamble\n"
                             "You can enter a sum by either manually entering one in the Bet Amount field\n"
-                            "or by clicking the Max or Default buttons, which will enter a value based on your current balance and/or the config\n"
+                            "or by clicking the Max or Default buttons, which will enter a value based on your current balance and the config\n"
                             "To confirm your bet, click the Bet button\n\n"
                             "You can change the stream by entering a different stream in the Change Channel field\n"
                             "To confirm the swap, press the Enter key or click the Change button\n\n"
@@ -85,7 +85,7 @@ class asyncHelpWindow(QMainWindow):
                             "Set default bet: Ctrl+D\n"
                             "Halve current bet: Ctrl+H\n"
                             "Double current bet: Ctrl+G\n"
-                            "Quick-bet: Ctrl+Q (no confirmation, uses default/staged bet)"
+                            "Quick-bet: Ctrl+Q (no confirmation, uses default/staged bet)\n"
                             "Clear bet field: Ctrl+Y (ensure everything is deselected with Escape\n"
                             "Select an outcome: Ctrl+num (any number 1-9 = outcomes 1-9, 0 = outcome 10)\n"
                             "Save own prediction history: Ctrl+S\n"
@@ -122,11 +122,12 @@ class asyncHelpWindow(QMainWindow):
 
 ### Starter Startup ###
 
-
 helpWindowApp = QApplication(sys.argv)
 # base app instance (passes command line arguments)
 displayWindow = asyncHelpWindow()
 # creates a window reference
+tepmPID = int(sys.argv[1])
+# grabs the parent process' (TEPM) PID 
 
 helpWindowApp.exec()
 # exceutes the app task (runs the QApplication)

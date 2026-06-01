@@ -71,7 +71,7 @@ class asyncHistWindow(QMainWindow):
         """A map of channels with their case-insensitive spellings"""
         self.channelPointMap = {}
         """A map of channels with their points and point save times"""
-        self.chartViewDots = 25
+        self.chartViewDots = 30
         """How many chart data points (dots) are visible at once"""
         self.chartView = 0
         """What index of chart view the current view is on (starts at 0)"""
@@ -169,6 +169,8 @@ class asyncHistWindow(QMainWindow):
         # aligns the text inside to center
         self.currentChannelLine.setMinimumSize(150, 40)
         # min size
+        self.currentChannelLine.setEnabled(False)
+        # defaults to off, since it starts in bar chart
         self.mainLayout.addWidget(self.currentChannelLine, 3, 2, alignment=Qt.AlignmentFlag.AlignLeft)
         # adds to layout (bottom row, right side)
 
@@ -347,11 +349,14 @@ class asyncHistWindow(QMainWindow):
             colors = ["#00751F" if gain >= 0 else "#630700" for gain in pointData["gain"]]
             # selects colors (green if the gain is positive, red if negative)
 
-            pointData.plot(kind="bar", y="gain", x="title", ax=ax, legend=False, color=colors)
+            pointData["labels"] = pointData["title"].apply(lambda title: title[:15] + "..." if len (title) > 15 else title)
+            # forms a new column in the dataframe with shortened labels (max of 15 characters)
+
+            pointData.plot(kind="bar", y="gain", x="labels", ax=ax, legend=False, color=colors)
             # makes a bar chart with gain in Y-axis and the prediction titles in X-axis (hides legend)
 
-            ax.tick_params(axis="x", colors="white", rotation=15)
-            # sets the X-axis ticks/text to white and slants them at 15deg
+            ax.tick_params(axis="x", colors="white", rotation=30)
+            # sets the X-axis ticks/text to white and slants them at 30deg
             ax.tick_params(axis="y", colors="white")
             # sets the Y-axis ticks/text to white
 
@@ -375,7 +380,7 @@ class asyncHistWindow(QMainWindow):
             ax.grid(True, color="gray", linestyle="--", alpha=0.3)
             # adds a semi-transparent grid
 
-        ax.set_title(f"Points Gained/Lost via Predictions (across all channels)\n(Data: {startDots} -> {endDots})", color="white")
+        ax.set_title(f"Points Gained/Lost via Predictions (across all channels)\n(Data: {startDots} to {endDots})", color="white")
         # sets the chart title
 
         self.chartCanvas.draw()
@@ -398,6 +403,17 @@ class asyncHistWindow(QMainWindow):
         ax.set_facecolor("#1E1E1E")
         # sets the background color for the axes
 
+        if self.pointGains.empty:
+        # if the point gain/loss entries don't exist (no data)
+            gainText = "No point gain data!"
+            # uses an empty text field
+        else:
+            pointsWon = self.pointGains.loc[self.pointGains["gain"] > 0, "gain"].sum()
+            pointsLost = abs(self.pointGains.loc[self.pointGains["gain"] < 0, "gain"].sum())
+            # gets the total points won and lost on bets
+            gainText = f"Total points won: {pointsWon:,.0f}\nTotal points lost: {pointsLost:,.0f}\nTotal gain: {pointsWon-pointsLost:,.0f} points"
+            # forms a string to use
+
         if self.winLoss.empty:
         # if the win/loss entries don't exist (no data)
             ax.text(0.5, 0.5, "No valid Win/Loss data", color="white", ha="center", va="center", fontsize=14)
@@ -410,6 +426,17 @@ class asyncHistWindow(QMainWindow):
             # adds up the wins and losses for the total
             colors = ["#00751F" if state == "Win" else "#630700" for state in wlCount.index]
             # selects colors (green if the state is a win, red if loss)
+            ax.text(
+                1.15, 0.5,
+                # coordinates
+                gainText,
+                # the text formed before
+                transform=ax.transAxes,
+                color="white",
+                fontsize=11,
+                va="center"
+            )
+            # adds the gain text string from earlier
             ax.pie(wlCount, labels=wlCount.index, 
                    autopct=lambda percent: f"{int(round(percent / 100 * totalWL))}\n({percent:.1f}%)",
                    # forms the labels to display inside the pie chart (X \n Y%)
@@ -437,7 +464,8 @@ class asyncHistWindow(QMainWindow):
             # user inform
             return
             # stop
-
+        self.chartMover(-1, "Reset")
+        # calls the chart mover with reset to reset the view to 0-15
         self.pointsPerChannel(channel)
         # calls the PPC charter
 
@@ -466,33 +494,38 @@ class asyncHistWindow(QMainWindow):
         ax.set_facecolor("#1E1E1E")
         # sets the background color for the axes
 
-        channelTimestamps = MDates.date2num(self.channelPointMap[caseChannel]["timestamps"])
-        # gets the list of timestamps for the channel
-        channelPoints = self.channelPointMap[caseChannel]["points"]
-        # gets the list of points/balance for the channel
-
         plotStartDot = self.chartView
         # gets the current start point for the chart
         plotEndDot = (self.chartView + self.chartViewDots)
         # calculates the end point
 
-        ax.plot(channelTimestamps[plotStartDot:plotEndDot], channelPoints[plotStartDot:plotEndDot], marker="o", color="#00687A", linewidth=2)
+        timestamps = self.channelPointMap[caseChannel]["timestamps"][plotStartDot:plotEndDot]
+        # gets the timestamps for the current plot range
+        points = self.channelPointMap[caseChannel]["points"][plotStartDot:plotEndDot]
+        # gets the points for the current plot range
+
+        xPositions = range(len(points))
+        # uses the point length as X-axis positions
+        ax.plot(xPositions, points, marker="o", color="#00687A", linewidth=2)
         # plots the chart with the timestamps and points
+
+        labels = [dt.strftime("%b %d %H:%M") for dt in timestamps]
+        # formats the timestamps 
+
+        ax.set_xticks(list(xPositions))
+        # sets the X-axis ticks to use the list of point dots
+        ax.set_xticklabels(labels, rotation=30, color="white")
+        # sets X-axis labels
         
-        for xPoint, yPoint in zip(channelTimestamps[plotStartDot:plotEndDot], channelPoints[plotStartDot:plotEndDot]):
+        for xPoint, yPoint in zip(xPositions, points):
         # goes through every X and Y axis data point
             ax.annotate(f"{yPoint:,.0f}", xy=(xPoint, yPoint), xytext=(0, 16), textcoords=("offset points"), color="white", fontsize=10, ha="center", va="top")
             # adds a little vertical offset to the points, formats them into thousand-separated values (1,000)
 
-        ax.set_title(f"Points over time for {caseChannel}\nUse the channel swapping here!\n(Data: {plotStartDot} -> {plotEndDot})", color="white")
+        ax.set_title(f"Points over time for {caseChannel}\nUse the channel swapping here!\n(Data: {plotStartDot} to {plotEndDot})", color="white")
         # sets title
         ax.set_ylabel("Points", color="white")
         # adds Y-axis label
-
-        ax.xaxis.set_major_formatter(MDates.DateFormatter("%b %d %H:%M"))
-        # formats the X-axis timestamps to human readable format (Month XX HH:MM)
-        ax.tick_params(axis="x", rotation=15, colors="white")
-        # makes the X-axis ticks slanted and white
 
         ax.yaxis.set_major_formatter(StrMethodFormatter("{x:,.0f}"))
         # formats the Y-axis points to use thousand-separation (1,000)
@@ -536,17 +569,36 @@ class asyncHistWindow(QMainWindow):
         if self.activeChart == 0:
         # if the active chart is 0
             self.statsCharter()
-            # calls the W/L stats charter
+            # calls the W/L stats pie charter
+            self.currentChannelLine.setEnabled(False)
+            # disables the channel swapping line
+            self.leftButton.setEnabled(False)
+            self.rightButton.setEnabled(False)
+            # disables the left/right chart movers (does nothing in pie)
 
         elif self.activeChart == 1:
         # if the active chart is 1
+            self.chartViewDots = 30
+            # sets the dot amount higher
             self.pointsCharter()
-            # calls the point gain charter
+            # calls the point gain bar charter
+            self.currentChannelLine.setEnabled(False)
+            # disables the channel swapping line
+            self.leftButton.setEnabled(True)
+            self.rightButton.setEnabled(True)
+            # enables the left/right chart movers
 
         elif self.activeChart == 2:
         # if the active chart is 2
+            self.chartViewDots = 15
+            # lowers the dot count (fewer data points)
             self.pointsPerChannel(self.currentChannel)
             # calls the points per channel charter with the active channel
+            self.currentChannelLine.setEnabled(True)
+            # disables the channel swapping line
+            self.leftButton.setEnabled(True)
+            self.rightButton.setEnabled(True)
+            # enables the left/right chart movers
 
 
 
@@ -564,9 +616,13 @@ class asyncHistWindow(QMainWindow):
 
 ### Chart Moving L -> R -> ###
 
-    def chartMover(self, direction: int):
+    def chartMover(self, direction: int, action:str=None):
         """Function to move the chart(s) left to right to display more data"""
 
+        if action == "Reset":
+        # if the action is to reset
+            self.chartView = 0
+            # sets the chart view to 0
         newChartView = self.chartView + (direction * self.chartViewDots)
         # gets the new view dots position (eg. view = 0 -> 0 + (1 * 25) = 25)
         maxChartView = max(0, len(self.pointGains) - self.chartViewDots)
@@ -599,6 +655,8 @@ histWindowApp = QApplication(sys.argv)
 # base app instance (passes command line arguments)
 displayWindow = asyncHistWindow()
 # creates a window reference
+tepmPID = int(sys.argv[1])
+# grabs the parent process' (TEPM) PID 
 
 histWindowApp.exec()
 # exceutes the app task (runs the QApplication)

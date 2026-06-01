@@ -1,4 +1,4 @@
-import sys, os, threading, json, datetime
+import sys, os, threading, json, time
 # Required system management
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
@@ -600,6 +600,23 @@ class asyncDetailsWindow(QMainWindow):
                             self.predictPoints9, self.predictPoints10]
         """A list of prediction point pool labels (bottom)"""
 
+        self.inputThreadManager()
+        # runs the thread manager to start the input polling
+
+
+
+### Input Thread ###
+
+    def inputThreadManager(self):
+        """Thread manager for stdin"""
+        self.inputThread = threading.Thread(
+            # makes a thread just for the input polling
+            target=self.inputPoll,
+            daemon=True
+        )
+        self.inputThread.start()
+        # starts the thread
+
 
 
 ### Queue Poll ###
@@ -609,20 +626,19 @@ class asyncDetailsWindow(QMainWindow):
         while self.running:
         # while the program is running
 
-            item = sys.stdin.read()
-            # goes through the standard in and reads the sent dictionary
-            if not item:
-            # if there's nothing
-                break
-                # breaks the loop
-            
-            predictionDict = json.loads(item)
-            # jsonifies the dictionary 
+            line = sys.stdin.readline()
+            # grabs a sent message from TEPM
+            if not line:
+            # if it's not a valid message (empty)
+                time.sleep(1)
+                # waits a second
+                continue
+                # doesn't progress loop
 
-            print("found dict in pd")
-
+            predictionDict = json.loads(line)
+            # loads the sent line as a json dictionary
             self.predictUpdateUI(predictionDict)
-            # calls the prediction UI with the dictionary to update
+            # calls the UI updater with the passed dictionary
 
 
 
@@ -840,11 +856,8 @@ displayWindowApp = QApplication(sys.argv)
 # base app instance (passes command line arguments)
 displayWindow = asyncDetailsWindow()
 # creates a window reference
+tepmPID = int(sys.argv[1])
+# grabs the parent process' (TEPM) PID 
 
-inputThread = threading.Thread(target=displayWindow.inputPoll, args=(), daemon=True)
-# makes a thread for the inputPoll to sit in
-inputThread.start()
-# starts the thread
-
-displayWindowApp.exec()
+sys.exit(displayWindowApp.exec())
 # exceutes the app task (runs the QApplication)
