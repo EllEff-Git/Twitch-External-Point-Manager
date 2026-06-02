@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.6.2.0237"
+tepmVer = "0.6.2.0241"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
