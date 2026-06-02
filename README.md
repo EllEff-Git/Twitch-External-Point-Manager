@@ -4,10 +4,11 @@
 <br>
 
 ### Current features: 
-- Get channel point balance, streaks or both for any channel (or a list of channels)
+- Get channel point balance, streaks or both for any single or list of channels (includes channels where otherwise disabled)
 - View and place predictions
 - Predictions feature a configurable default bet, a max bet, several keybinds and more detailed stats
-- Stores prediction results to file, can be used to view past bet outcomes in chart form
+- Stores prediction results to file, displays them in 3 separate chart forms (bar chart for gains, line chart for per-channel historical balance, pie chart for Win/Loss ratio and total stats)
+- Automatic betting via configurable outcome selection (independent of prediction view)
 
 
 ### "Planned" features: (concept exists, definitely possible - figuring out how/if there's use)
@@ -27,7 +28,11 @@
 
 #### Login is handled by a QWebEngine (a built-in browser that's used to store the login locally) <br>
 
-#### All the point/streak information is pushed into a CSV file for easy exporting for a more "user-friendly" viewing experience
+#### All the channel points information is pushed into a CSV file for easy exporting for a more "user-friendly" viewing experience
+
+#### Streak information is saved into a json to keep track of their 'activity' and to store the channel IDs to reduce calls later on
+
+#### Predictions are stored into a json file, where they are automatically graphed from with the history view
 
 <br>
 
@@ -47,9 +52,7 @@ Prediction History: <br/>
 ##### Especially with the new UI updates, I can't see my points when I try to bet and sometimes the predictions don't even load right away... <br>
 
 - Predicting with TEPM is not only more detailed, but is also faster and isn't subject to having the predictions not appear
-##### Since this program only targets specific network requests, and skips things like loading the stream itself, it can load the specific items considerably faster, and swapping between streams in the prediction view is near-instant <br>
-
-- This program can also show channel points on channels where they're otherwise disabled <br>
+##### Since this program only targets specific network requests, and skips things like loading the stream itself, it can load the specific information quicker - swapping between streams in the prediction view is hugely faster than native Twitch <br>
 
 - Participating in predictions with this program doesn't count as presence in the stream, so you can keep earning points elsewhere
 ##### Very good for Drops, too, since presence in multiple streams can mess with Drops progression <br>
