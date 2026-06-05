@@ -7285,7 +7285,7 @@ class AutoBetWindow(QObject):
 
         if not outcomeToBet:
         # if no outcome is STILL defined (can't fix)
-            ctrl.taskChange.emit("Didn't place bet due to missing outcome match!")
+            ctrl.taskChange.emit(f"Failed to auto-bet on {self.selectedChannel}! No outcome matched!")
             # user inform
         else:
         # if an outcome is defined
@@ -7302,8 +7302,8 @@ class AutoBetWindow(QObject):
                 # if it's an integer
                     betToSet = self.betSize
                     # the bet to use is that defined integer
-                else:
-                # if it's not an int (it should be a string, "default", otherwise using )
+                elif type(self.betSize) == str and self.betSize.lower() == "default":
+                # if it's string and matches default
                     if roundBalanceBet:
                     # if balance rounding is enabled
                         if stageBetBoolean:
@@ -7325,14 +7325,20 @@ class AutoBetWindow(QObject):
                         # uses the default bet size
                     if betToSet < minimumBet:
                     # if the bet is smaller than minimum bet
-                        if minimumBet >= balance:
-                        # if the minimum bet is greater or eq to the channel balance
-                            betToSet = minimumBet
-                            # overrides to minimum
-                        else:
-                        # if not
+                        if minimumBet > balance:
+                        # if the minimum bet is greater than the balance available
                             betToSet = balance
                             # uses the remaining balance
+                        else:
+                        # if not
+                            betToSet = minimumBet
+                            # uses the minimum bet instead
+                else:
+                # not int and not matching default
+                    ctrl.taskChange.emit(f"Failed to auto-bet on {self.selectedChannel}! No valid bet amount set!")
+                    # user inform of error
+                    return
+                    # stops
                 if betToSet > balance:
                 # if the bet is larger than the available balance
                     ctrl.taskChange.emit(f"Failed to auto-bet on {self.selectedChannel}! Bet exceeds balance!")
@@ -7347,7 +7353,7 @@ class AutoBetWindow(QObject):
                     # sends the prediction details to the betting signal -> bet function
             else:
             # bet size isn't defined/is None
-                ctrl.taskChange.emit("No bet size defined! Can't place prediction")
+                ctrl.taskChange.emit(f"Failed to auto-bet on {self.selectedChannel}! No valid bet amount set!")
                 # user inform of error
 
 
