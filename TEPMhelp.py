@@ -126,8 +126,14 @@ helpWindowApp = QApplication(sys.argv)
 # base app instance (passes command line arguments)
 displayWindow = asyncHelpWindow()
 # creates a window reference
-tepmPID = int(sys.argv[1])
-# grabs the parent process' (TEPM) PID 
+if len(sys.argv) > 1:
+# if there's more than 1 sys argument (opened from file vs opened as subprocess)
+    tepmPID = int(sys.argv[1])
+    # grabs the parent process' (TEPM) PID 
+else:
+# if there is no argument
+    tepmPID = None
+    # sets as None
 
 helpWindowApp.exec()
 # exceutes the app task (runs the QApplication)

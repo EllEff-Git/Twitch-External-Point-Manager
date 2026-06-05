@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.6.2.0241"
+tepmVer = "0.6.5.2129"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -69,8 +69,6 @@ profileName = None
 """The user profile (folder) name"""
 enableStreaks = False
 """The boolean for streak checking"""
-autoAddStreaks = False
-"""The boolean for adding streaks automatically"""
 autoRemoveStreaks = False
 """The boolean for removing stale streaks automaticall"""
 enablePoints = False
@@ -87,11 +85,14 @@ stageBetBalance = 0
 """The points required to set stage bet over default bet"""
 stageBetBoolean = False
 """The boolean for staging bets rather than just having one default"""
+minimumBet = 0
+"""The minimum amount of points to bet with default/staged bet"""
 streakMap = {}
 """The map that holds all the streak list information"""
 hashMap = {}
 """The map that holds all the hashes and related information"""
-excludedEntries = ["enableErrorsInCSV", "autoAddStreaks", "autoRemoveStreaks", "defaultBet", "roundBalanceBet" "exampleChannel"]
+excludedEntries = ["autoRemoveStreaks", "enableErrorsInCSV",  "exampleChannel", "defaultBet", "roundBalanceBet", "stagedBetBoolean",
+                   "stagedBet", "stagedBalance"]
 """A list of streakMap entries that shouldn't count for the streak list"""
 
 
@@ -114,9 +115,9 @@ displayWindowBool = False
 reqSession = requests.Session()
 """A request session that stores cached request information"""
 rURL = "https://gql.twitch.tv/gql"
-"""The Twitch endpoint to make requests to"""
+"""The Twitch endpoint to make GraphQL requests to"""
 gURL = "https://api.github.com/repos/EllEff-Git/Twitch-External-Point-Manager/tags"
-"""The GitHub URL to make an update check request to"""
+"""The GitHub URL to make update check requests to"""
 
 
 
@@ -314,17 +315,9 @@ class StarterWindow(QWidget):
         # adds to top of config page (spans across both columns)
 
         self.defaultBetMask = QIntValidator(0, 250000)
-        """A validator for the default bet"""
-        self.stageBalanceMask = QIntValidator(0, 500000000)
-        """A validator for the staged balance minimum (max of 50 million because that's just how it is)"""
-        
-        self.autoAddStreaksCheckbox = QCheckBox("Auto-add streaks")
-        """Checkbox for automatically adding streaks"""
-        self.autoAddStreakText = QLabel("Automatically add active streaks to list")
-        """Text helper for streak addition"""
-        self.autoAddStreakText.setToolTip("When checking points and streaks, adds active streaks to the streak list file\n"
-                                        "Active streak = longer than 1")
-        # tooltip
+        """A validator for the default bet (0 - 250,000)"""
+        self.stageBalanceMask = QIntValidator(0, 250000000)
+        """A validator for the staged balance minimum (0 - 250M)"""
 
         self.autoRemoveStreaksCheckbox = QCheckBox("Auto-remove streaks")
         """Checkbox for automatically removing inactive streaks"""
@@ -404,11 +397,23 @@ class StarterWindow(QWidget):
                                             "Otherwise, it'll use the smaller default bet")
         # tooltip
 
-        self.configLayout.addWidget(self.autoAddStreaksCheckbox, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.minimumBetLine = QLineEdit()
+        """Line to edit the minimum bet"""
+        self.minimumBetLine.setValidator(self.defaultBetMask)
+        # sets a validator to only accept digits between 0 and 250,000 (max Twitch bet)
+        self.minimumBetLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+        self.minimumBetLine.setPlaceholderText("0")
+        self.minimumBetText = QLabel("Minimum bet")
+        """Text helper for minimum bet"""
+        self.minimumBetText.setToolTip("The minimum bet to set, in case default/staged bets lead to a very small bet\n"
+                                        "Eg. a default bet of 5,000 with a balance of 235,020 would lead to a bet of 20\n"
+                                        "Setting the minimum bet will override that, if the bet would've been smaller")
+        # tooltip
+
         self.configLayout.addWidget(self.autoRemoveStreaksCheckbox, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.enableCSVErrorsCheckbox, 6, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the selector fields for points/streaks to the left of the layout
-        self.configLayout.addWidget(self.autoAddStreakText, 3, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self.configLayout.addWidget(self.autoRemoveStreaksText, 5, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self.configLayout.addWidget(self.enableCSVErrorsText, 7, 0, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         # adds the points/streaks text fields to the left of the layout
@@ -418,21 +423,23 @@ class StarterWindow(QWidget):
         self.configLayout.addWidget(self.stagedBalanceBetCheckbox, 6, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.stagedBetLine, 8, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         self.configLayout.addWidget(self.stagedBetBalanceLine, 10, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.configLayout.addWidget(self.minimumBetLine, 12, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds the selector fields for predictions to the right of the layout
         self.configLayout.addWidget(self.defaultBetText, 3, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self.configLayout.addWidget(self.roundBalanceBetText, 5, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self.configLayout.addWidget(self.stagedBalanceBetText, 7, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self.configLayout.addWidget(self.stagedBetText, 9, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         self.configLayout.addWidget(self.stagedBetBalanceText, 11, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        self.configLayout.addWidget(self.minimumBetText, 13, 1, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         # adds the prediction text fields to the right of the layout
 
-        self.configPageTopSpacer = QSpacerItem(50, 25)
+        self.configPageTopSpacer = QSpacerItem(25, 25)
         # a spacer between the top text and the options
         self.configPageBottomSpacer = QSpacerItem(50, 25)
         # adds a layout spacer below the "save" button
 
         self.configLayout.addItem(self.configPageTopSpacer, 1, 0, 1, 1)
-        self.configLayout.addItem(self.configPageBottomSpacer, 12, 0, 1, 1)
+        self.configLayout.addItem(self.configPageBottomSpacer, 14, 0, 1, 1)
         # adds the spacers to layout
 
         self.configPrepSaveButton = QPushButton("Save")
@@ -920,8 +927,8 @@ class StarterWindow(QWidget):
 
     def configWindow(self, action:str=None):
         """Function to load the configuration window"""
-        global streakMap, enableErrorLog, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
-        global stageBet, stageBetBalance, stageBetBoolean
+        global streakMap, enableErrorLog, autoRemoveStreaks, defaultBet, roundBalanceBet
+        global stageBet, stageBetBalance, stageBetBoolean, minimumBet
         # global -> local
 
         self.labelSwap.emit("Reading config...")
@@ -936,8 +943,6 @@ class StarterWindow(QWidget):
 
                 enableErrorLog = streakMap.get("enableErrorsInCSV", True)
                 # gets the boolean for error logging
-                autoAddStreaks = streakMap.get("autoAddStreaks", True)
-                # gets the boolean for auto-adding streaks
                 autoRemoveStreaks = streakMap.get("autoRemoveStreaks", False)
                 # gets the boolean for auto-removing streaks
                 defaultBet = int(streakMap.get("defaultBet", 5000))
@@ -950,8 +955,9 @@ class StarterWindow(QWidget):
                 # gets the integer for staged bet balance requirement
                 stageBetBoolean = streakMap.get("stagedBetBoolean", False)
                 # gets the boolean for whether or not to use the bet staging
+                minimumBet = int(streakMap.get("minimumBet", 0))
+                # gets the integer for minimum bet
 
-                self.autoAddStreaksCheckbox.setChecked(autoAddStreaks)
                 self.autoRemoveStreaksCheckbox.setChecked(autoRemoveStreaks)
                 self.enableCSVErrorsCheckbox.setChecked(enableErrorLog)
                 self.defaultBetLine.setText(f"{defaultBet}")
@@ -959,6 +965,7 @@ class StarterWindow(QWidget):
                 self.stagedBetLine.setText(f"{stageBet}")
                 self.stagedBetBalanceLine.setText(f"{stageBetBalance}")
                 self.stagedBalanceBetCheckbox.setChecked(stageBetBoolean)
+                self.minimumBetLine.setText(f"{minimumBet}")
                 # sets the field status' based on the config-stored values
 
                 if action == "reload":
@@ -1005,11 +1012,10 @@ class StarterWindow(QWidget):
     
     def modifyConfig(self):
         """The function that actually modifies the config"""
-        global enableErrorLog, streakMap, autoAddStreaks, autoRemoveStreaks, defaultBet, roundBalanceBet
-        global stageBet, stageBetBalance, stageBetBoolean
+        global enableErrorLog, streakMap, autoRemoveStreaks, defaultBet, roundBalanceBet
+        global stageBet, stageBetBalance, stageBetBoolean, minimumBet
         # global -> local
 
-        streakMap["autoAddStreaks"] = self.autoAddStreaksCheckbox.isChecked()
         streakMap["autoRemoveStreaks"] = self.autoRemoveStreaksCheckbox.isChecked()
         streakMap["enableErrorsInCSV"] = self.enableCSVErrorsCheckbox.isChecked()
         streakMap["roundBalanceBet"] = self.roundBalanceBetCheckbox.isChecked()
@@ -1079,10 +1085,19 @@ class StarterWindow(QWidget):
                 # empty string
         streakMap["stagedBalance"] = stageBalanceRaw
         # saves to map
+
+        minimumBetRaw = self.minimumBetLine.text().strip()
+        # grabs the minimum bet size from the field
+        if minimumBetRaw == "":
+        # if it's empty
+            minimumBetRaw = 0
+            # overrides to default 0
+        streakMap["minimumBet"] = minimumBetRaw
+        # saves to map
+
         streakMap["exampleChannel"] = {"ID":"exampleChannelID", "Active": False}
         # adds an examplechannelID
 
-        autoAddStreaks = streakMap["autoAddStreaks"]
         autoRemoveStreaks = streakMap["autoRemoveStreaks"]
         enableErrorLog = streakMap["enableErrorsInCSV"]
         defaultBet = int(streakMap["defaultBet"])
@@ -1090,6 +1105,7 @@ class StarterWindow(QWidget):
         stageBet = int(streakMap["stagedBet"])
         stageBetBalance = int(streakMap["stagedBalance"])
         stageBetBoolean = streakMap["stagedBetBoolean"]
+        minimumBet = int(streakMap["minimumBet"])
         # sets the global variables based on the entry values
 
         with open(streakMapPath, "w") as strk:
@@ -3615,13 +3631,15 @@ class tepmWindow(QWidget):
                 # checks when the live status was last checked
                 activeStatus = channelData["active"]
                 # checks if the channel is set to active or removed from the map
-                if ((lastCheck + 900) < time.time()) and activeStatus:
-                # if it's been more than 15 minutes since the last time the status was checked and the channel is "active"
+                if ((lastCheck + 600) < time.time()) and activeStatus:
+                # if it's been more than 10 minutes since the last time the status was checked and the channel is "active"
                     checkLive = True
                     # sets the checkLive boolean to true, so the status will be re-checked
+                    self.pastChannels[caseName]["timestamp"] = time.time()
+                    # updates the timestamp to match current time
 
             if caseName and ((caseName not in self.pastChannels) or checkLive or (caseName != self.currentChannel)):
-            # if the channel is real and isn't listed in the previous channels, or it's been 15 minutes, or the name doesn't match the current channel
+            # if the channel is real and isn't listed in the previous channels, or it's been 10 minutes, or the name doesn't match the current channel
                 caseNameDict = streakGrabber(self.state, caseName, None)
                 # gets the return dictionary
                 if caseNameDict["success"]:
@@ -3644,7 +3662,7 @@ class tepmWindow(QWidget):
                     isLive = False
                     # defaults to False (offline)
 
-                if caseName not in self.pastChannels or checkLive:
+                if (caseName not in self.pastChannels) or checkLive:
                 # if the live status doesn't match stored, the channel hasn't yet been stored, or it's been long enough to trigger an update
                     liveDetailsDict = liveDetailGrabber(self.state, caseName)
                     # makes a request to get the livestream details
@@ -3655,9 +3673,9 @@ class tepmWindow(QWidget):
                         liveGame = str(liveDetailsDict["game"])
                         # grabs the title and the game from the return
 
-                        if len(liveTitle) > 50:
-                        # if the title is > 50 characters long
-                            liveTitle = (liveTitle[:47] + "...")
+                        if len(liveTitle) > 55:
+                        # if the title is > 55 characters long
+                            liveTitle = (liveTitle[:52] + "...")
                             # only stores the first part, to prevent extremely long titles (adds "..." to indicate it's cut off)
 
                         if liveDetailsDict["status"]:
@@ -3673,16 +3691,23 @@ class tepmWindow(QWidget):
                         statusString = f"N/A"
                         # just N/A (not available)
                 else:
-                # if the live has already been stored
+                # if the live has already been stored and it hasn't been 10 minutes
                     statusString = self.pastChannels[caseName]["status"]
                     # grabs the old one from cache
-                
-                activeStatus = self.pastChannels.get(caseName, {"active": True}).get("active")
-                # grabs the previously stored status (True/False, if none is set, defaults to True)
-                
-                self.pastChannels[caseName] = {"streak": caseStreak, "live": isLive, "timestamp": time.time(), "active": activeStatus, "status": statusString}
-                # adds both to map, adds timestamp for check, adds boolean for activity and the status string
 
+                if self.pastChannels.get(caseName, None) is not None:
+                # if there's stored records for this channel
+                    storedStamp = self.pastChannels[caseName].get("timestamp", time.time())
+                    activeStatus = self.pastChannels[caseName].get("active", True)
+                    # grabs the stored timestamp and the active status (uses default if can't find)
+                else:
+                # if there's not records yet
+                    activeStatus = True
+                    storedStamp = time.time()
+                    # sets to default values (True for active and current time for timestamp)
+                
+                self.pastChannels[caseName] = {"streak": caseStreak, "live": isLive, "timestamp": storedStamp, "active": activeStatus, "status": statusString}
+                # adds both to map, adds timestamp for check, adds boolean for activity and the status string
                 self.predictChannelStatus.setText(self.pastChannels[caseName]["status"])
                 # loads the last stored status
 
@@ -3726,8 +3751,10 @@ class tepmWindow(QWidget):
 
             if self.autoBetBool:
             # if the auto-bet subprocess is in the need of new data (first start)
-                ctrl.autoBetDataSignal.emit({"channel": caseName, "balance": self.predictChannelPoints, "pointsName": pointsString})
-                # sends a small dictionary with essential info
+                ctrl.autoBetDataSignal.emit({"type": "channel", "channel": caseName})
+                # sends a small dictionary with the channel name
+                ctrl.autoBetDataSignal.emit({"type": "balance", "balance": self.predictChannelPoints, "pointsName": pointsString})
+                # sends the balance and point name
                 self.autoBetBool = False
                 # turns off to stop sending data
 
@@ -3737,8 +3764,6 @@ class tepmWindow(QWidget):
                 # sets the boolean to True so the UI gets fully updates
                 self.predictionNumbers[eventID] = {"bet": ownVoteSum, "option": ownVoteID, "balance": self.predictChannelPoints}
                 # stores the bet, voted outcome and current balance in the dictionary with the eventID as key
-                ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": ownVoteSum})
-                # sends a signal to the auto-bet function to prevent double bets (manual bets override)
             elif not self.predictionNumbers.get(eventID, False):
             # if there's nothing stored yet
                 self.predictionNumbers[eventID] = {}
@@ -3759,8 +3784,8 @@ class tepmWindow(QWidget):
 
                     localTime = prediction["localTS"]
                     # grabs the local timestamp (still in datetime format)
-                    timer = int((prediction["timer"]) + 2)
-                    # grabs the prediction timer (+2 due to Twitch compensating)
+                    timer = int((prediction["timer"]) + 3)
+                    # grabs the prediction timer (+3 due to Twitch compensating)
                     self.timerEnd = localTime + datetime.timedelta(seconds=timer)
                     # calculates the end of the timer, stores in self
                     self.labelTimer = QTimer()
@@ -3846,6 +3871,15 @@ class tepmWindow(QWidget):
                     optionUsers = outcomes[x]["totalUsers"]
                     # gets the users that went in on the option
 
+                    if self.predictionID.get(eventID, None) is not None:
+                    # if there's already an entry for this event
+                        self.predictionID[eventID]["total"] = totalPoints
+                        # adds the total number of points for this event
+                    else:
+                    # if not
+                        self.predictionID[eventID] = {"total": totalPoints}
+                        # stores a new map with just total as entry
+
                     if totalPoints > 0:
                     # if there's more than 0 points in the total pool
                         pointShare = ((optionPoints / totalPoints) * 100)
@@ -3886,7 +3920,7 @@ class tepmWindow(QWidget):
                     self.predictOutcomeWidgets[x].show()
                     # enables the xth widget (label + button + label)
 
-                    self.predictionKeys[eventID][optionID] = buttonX
+                    self.predictionKeys[eventID][optionID] = {"button": buttonX, "title": optionName}
                     self.predictionKeys[eventID][buttonX] = optionID
                     # stores the outcome and button as keys:values for each other
 
@@ -3902,6 +3936,8 @@ class tepmWindow(QWidget):
 
                 if ownVoteID:
                 # if user voted in this event
+                    totalPoints += ownVoteSum
+                    # adds the user's vote to the total points
                     voteShare = ((ownVoteSum / totalPoints) * 100)
                     # calculates user's share of the total pool in percentages
                     if voteShare < 1:
@@ -3946,7 +3982,7 @@ class tepmWindow(QWidget):
 
                     if ownVoteID:
                     # if user voted
-                        buttonToSelect = self.predictionKeys[eventID][ownVoteID]
+                        buttonToSelect = self.predictionKeys[eventID][ownVoteID]["button"]
                         # gets the stored option ID's (voted outcome ID) linked button identifier
                         self.predictButtonManager("Vote", buttonToSelect)
                         # calls to lock the option selection buttons
@@ -3998,7 +4034,7 @@ class tepmWindow(QWidget):
                                 # stores the potential win points in the map (safeguard)
                             self.betLabelUpdater(betString, "Green")
                             # sets text to match
-                            self.predictButtonManager("Vote", self.predictionKeys[eventID][ownVoteID])
+                            self.predictButtonManager("Vote", self.predictionKeys[eventID][ownVoteID]["button"])
                             # calls to lock the option buttons, sets the button to show selected
                         else:
                         # user didn't vote
@@ -4006,7 +4042,67 @@ class tepmWindow(QWidget):
                             # calls to lock everything, no selection
 
                     else:
-                    # prediction is resolved (paid out)
+                    # prediction is resolved (paid out) or refunded
+                        predictionHistory = prediction["self"]
+                        # gets the past predictions from this channel
+
+                        if predictionHistory and (len(predictionHistory) > 0) and type(predictionHistory) == list:
+                        # if the past predictions list (of dictionaries) is defined (as a list) and is not empty
+                            compareFlag = False
+                            # default flag/boolean to check if the times should be compared (only if they're both valid)
+                            predictionHistory = predictionHistory[0]
+                            # takes the 0th element
+                            lastResult = predictionHistory["result"]
+                            # grabs the last voted option result
+                            if lastResult == "REFUND":
+                            # if the previously voted for option was refunded
+                                updateTime = predictionHistory.get("updatedAt", None)
+                                # grabs the timestamp the voted for prediction was "updated" (refunded) at
+                                payoutTime = prediction.get("updatedAt", None)
+                                # grabs the timestamp the last prediction of the channel occurred
+                                if (updateTime is not None) and (payoutTime is not None):
+                                # if both update timestamps are defined
+                                    compareFlag = True
+                                    # sets the flag to True
+                                elif (updateTime is None) and (payoutTime is not None):
+                                # if the update time for the refund isn't set, but the payout is
+                                    updateTime = predictionHistory.get("predictedAt", None)
+                                    # tries to grab the prediction time instead of the update time
+                                    if updateTime is not None:
+                                    # if that worked
+                                        compareFlag = True
+                                        # sets the flag to True
+                                if compareFlag:
+                                # if the flag is set to True
+                                    updateTimeDT = datetime.datetime.fromisoformat(updateTime.replace("Z", "+00:00"))
+                                    # reformats the own voted update time
+                                    payoutTimeDT = datetime.datetime.fromisoformat(payoutTime.replace("Z", "+00:00"))
+                                    # reformats the last resolved prediction event
+                                    updateTimeDT = updateTimeDT.astimezone()
+                                    payoutTimeDT = payoutTimeDT.astimezone()
+                                    # swaps to current timezone
+                                    updateTimeFormat = updateTimeDT.strftime("%B %#d at %#H:%M:%S")
+                                    # formats the last updated time
+
+                                    if updateTimeDT > payoutTimeDT:
+                                    # if the last own voted for event was updated later than the resolved one, and it has a REFUND status
+                                        predictID = predictionHistory["event"]["id"]
+                                        # gets the ID of the refunded event
+                                        if predictID in self.predictionKeys:
+                                        # if that ID has been entered into the key registry
+                                            self.predictLabelUpdater("Refunded Prediction:", f"{self.predictionID[predictID]["title"]}", f"Started by {creator}, refunded {updateTimeFormat}", "red")
+                                            # grabs the info from variables, displays refund info
+                                        else:
+                                        # the ID doesn't exist (no saved data)
+                                            self.predictLabelUpdater("Refunded Prediction:", f"Unknown Prediction", f"Started by N/A, refunded {updateTimeFormat}", "red")
+                                            # only uses timestamp as variable, otherwise N/A data
+                                        self.predictButtonManager("Winner", None)
+                                        # calls the predictbuttonmanager to turn all buttons red (no given win)
+                                else:
+                                # flag is False (something isn't right with the timestamps, can't compare)
+                                    self.predictLabelUpdater("Refunded Prediction:", f"Unknown Prediction", f"Started by N/A, refunded at N/A", "red")
+                                    # only uses timestamp as variable, otherwise N/A data
+
                         winOutcomeDict = prediction["winner"]
                         # gets the winning outcome dictionary, otherwise uses set dictionary
                         winOutcomeID = winOutcomeDict["id"]
@@ -4016,7 +4112,7 @@ class tepmWindow(QWidget):
 
                         self.predictLabelUpdater("Paid Out Prediction:", f"{title}", f"Started by {creator}, ended {timestamp}", "orange")
                         # calls the updater to change UI
-                        self.predictButtonManager("Winner", self.predictionKeys[eventID][winOutcomeID])
+                        self.predictButtonManager("Winner", self.predictionKeys[eventID][winOutcomeID]["button"])
                         # calls the predict button manager to highlight winner in green
 
                         if ownVoteID:
@@ -4073,9 +4169,6 @@ class tepmWindow(QWidget):
                             self.savePredictions()
                             # saves the prediction history
 
-                        predictionHistory = prediction["self"]
-                        # gets the past predictions from this channel
-
                         if predictionHistory and (len(predictionHistory) > 0) and type(predictionHistory) == list:
                         # if the past predictions list (of dictionaries) is defined (as a list) and is not empty
                             for item in predictionHistory:
@@ -4128,7 +4221,7 @@ class tepmWindow(QWidget):
             # stores the error message
             if "10054" in errorMsg or "aborted" in errorMsg:
             # if the windows network error 10054 is present in the error string (looks for "10054" and "connection aborted")
-                errorMsg = "Windows network error! Please try again in a couple seconds..."
+                errorMsg = "Windows network error! Please wait..."
                 # overrides the error message 
             elif "subscriptable" in errorMsg:
             # if this is in the error message (means the return was empty)
@@ -4137,7 +4230,7 @@ class tepmWindow(QWidget):
 
             if self.pastChannels.get("visible", "305-14i0tjnsbekt-2-492q") in [predictChannel, self.currentChannel]:
             # if the currently/last visible channel is/was this channel or the previous (uses a fallback of absolute gibberish to avoid accidentally matching)
-                errorMsg = "Windows network error, please wait..."
+                errorMsg = "Reload error, please wait..."
                 # does nothing, uses preset error message
             else:
             # if not, sets empty UI instead
@@ -4252,11 +4345,13 @@ class tepmWindow(QWidget):
                 outcomeID = None
                 # sets to none
 
-            if self.predictionID.get(eventID, False):
+            if self.predictionID.get(eventID, None):
             # if there's a stored dictionary for this event
-                optionName = self.predictionID[eventID]["title"]
-                currentBet = self.predictionID[eventID]["id"]
-                # grabs the outcome name and ID for the voted option
+                if self.predictionID[eventID].get("title", None) is not None:
+                # if there's already an entry for the bet (the outcome name is stored already)
+                    optionName = self.predictionID[eventID]["title"]
+                    currentBet = self.predictionID[eventID]["id"]
+                    # grabs the outcome name and ID for the voted option
             else:
             # if there's not a bet yet
                 currentBet = None
@@ -4266,15 +4361,15 @@ class tepmWindow(QWidget):
             # if outcomeID is defined (didn't fail, was set correctly)
                 if currentBet == outcomeID:
                 # if there's already a bet with this outcome or no bet set yet
-                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, True)
+                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, True, False)
                     # calls the pyQt signal with the details (bet int, outcomeID)
                 elif not currentBet:
                 # if there's no bet yet
-                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, False)
+                    ctrl.makeBet.emit(bet, eventID, outcomeID, optionName, False, False)
                     # sends the bet with False (no bet yet)
                 else:
                 # the bet is not the same as the selected button (more than likely visually screwed)
-                    ctrl.makeBet.emit(bet, eventID, currentBet, optionName, True)
+                    ctrl.makeBet.emit(bet, eventID, currentBet, optionName, True, False)
                     # sends the bet with the current bet ID instead (overrides the selected button, in case there's none)
             else:
             # if it wasn't defined (either didn't get set properly or failed to grab)
@@ -4529,8 +4624,13 @@ class tepmWindow(QWidget):
                     else:
                         bet = defaultBet
                         # sets the default bet size instead
-                self.predictAmountLine.setText(f"{bet}")
-                # sets the calculated bet into the bet amount line
+                if bet < minimumBet:
+                # if the bet is lower than the minimum bet
+                    self.predictAmountLine.setText(f"{minimumBet}")
+                    # sets the minimum bet into the bet amount line
+                else:
+                    self.predictAmountLine.setText(f"{bet}")
+                    # sets the calculated bet into the bet amount line
             else:
             # balance rounding isn't enabled
                 self.predictAmountLine.setText(f"{defaultBet}")
@@ -6003,7 +6103,7 @@ class PointWorker(QObject):
                             expiring = False
                             # sets the flag to False so it doesn't get set
 
-                        if streakNum > 1 and channel not in streakMap and autoAddStreaks:
+                        if streakNum > 1 and channel not in streakMap:
                         # if there's a streak present and the channel isn't stored yet, plus the config option to add them to the streak map is on
                             streakMap[channel] = {
                                 "ID": int(streak["channelID"]),
@@ -6260,7 +6360,7 @@ class PredictionWorker(QObject):
         # connects the timer swap signal to the timer change function
         ctrl.predictionTimerOverride.connect(self.timerOverride)
         # connects the timer override signal to the timer override function
-        ctrl.makeBet.connect(self.bet)
+        ctrl.makeBet.connect(self.mainMakePredict)
         # connects the makeBet signal to the bet function
         ctrl.newChannelSignal.connect(self.predictChannelSwap)
         # connects the new channel signal to the swapper
@@ -6376,7 +6476,7 @@ class PredictionWorker(QObject):
 
 ### Send Bet ###
 
-    def bet(self, bet: int, eventID: str, outcomeID: str, selected: str, addon: bool = False):
+    def mainMakePredict(self, bet: int, eventID: str, outcomeID: str, selected: str, addon: bool = False, autoBet: bool = False):
         """Function to make/send a bet"""
   
         betInfo = sendPrediction(self.state, bet, eventID, outcomeID)
@@ -6388,11 +6488,18 @@ class PredictionWorker(QObject):
             # if this is adding points to an existing bet
                 ctrl.taskChange.emit(f'Added {bet:,.0f} to bet!')
                 # sets info text with addon confirmation
+            elif autoBet:
+            # if it's not adding points, but autobet is the sender
+                ctrl.taskChange.emit(f'Auto-bet {bet:,.0f} on "{selected}"\nMay the odds be ever in your favor!')
+                # user inform
             else:
+            # autobet is false and it's not adding points
                 ctrl.taskChange.emit(f'Bet {bet:,.0f} on "{selected}"\nMay the odds be ever in your favor!')
                 # sets info text
             ctrl.mainWindow.predictAmountLine.setText("")
             # clears the text
+            ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": bet})
+            # sends a signal to the auto-bet function to prevent double bets (manual bets override)
             ctrl.predictionTimerOverride.emit()
             # signals the prediction thread to skip waiting and immediately return data (to update UI faster)
         else:
@@ -6865,8 +6972,15 @@ class AutoBetWindow(QObject):
             # user inform
             self.betStatus = False
             # sets status to False (off)
-            ctrl.autoBetDataSignal.emit({"status": self.betStatus})
+            ctrl.autoBetDataSignal.emit({"type": "status", "status": self.betStatus})
             # tells the auto-bet window what the current status is
+            return
+            # stops running this function
+
+        if outputDict.get("debug", False):
+        # if the output dictionary is about debug printing
+            print(outputDict)
+            # just prints the whole thing
             return
             # stops running this function
 
@@ -6889,10 +7003,12 @@ class AutoBetWindow(QObject):
                     # uses the user-defined one instead
                 ctrl.taskChange.emit(f"Sending {self.selectedChannel} data for auto-bet...")
                 # user inform
-                inputDict = {"channel": self.selectedChannel, "balance": newChannelData["points"], "pointsName": newChannelData["pointsName"]}
-                # forms a dictionary from the return
-                ctrl.autoBetDataSignal.emit(inputDict)
-                # calls the input function to pass the dictionary
+                ctrl.autoBetDataSignal.emit({"type": "channel", "channel": self.selectedChannel})
+                # calls the input function to pass the new channel
+                self.selectedBalance = newChannelData["points"]
+                # stores the balance in self
+                ctrl.autoBetDataSignal.emit({"type": "balance", "balance": newChannelData["points"], "pointsName": newChannelData["pointsName"]})
+                # sends the balance details, too
             else:
             # unsuccessful
                 ctrl.taskChange.emit(f"Couldn't get data for {outputDict["newChannel"]} due to {newChannelData["error"]}")
@@ -6905,8 +7021,10 @@ class AutoBetWindow(QObject):
         # if there's not a new channel, just checks the current channel
             outputChannel = outputDict["channel"]
             # stores the output dictionary's passed channel in a temp variable for QoL
-            self.targetOutcomes = outputDict.get("targetOutcomes", [])
-            # grabs the targeted outcomes list, stores in self
+            for target in outputDict.get("targetOutcomes", []):
+            # for every name-matching target in the list
+                self.targetOutcomes.append(target.lower().strip())
+                # strips and lowers the targeted name match, adds to list
             self.betSize = outputDict["betSize"]
             # grabs the size of the bet to set (int or "default")
             self.fallbackOutcomeFull = outputDict.get("fallbackOutcomeFull", None)
@@ -6918,6 +7036,8 @@ class AutoBetWindow(QObject):
         # if the type is a swap
             ctrl.taskChange.emit(f"Swapping auto-bet channel to {outputChannel}...")
             # user inform
+            ctrl.autoBetDataSignal.emit({"type": "channel", "channel": outputChannel})
+            # signals the auto-bet program with the new channel
             self.betStatus = False
             # ensures the betting isn't on yet (no set rules)
         elif outputDict["type"] == "rules":
@@ -6939,7 +7059,7 @@ class AutoBetWindow(QObject):
 
         self.selectedChannel = outputChannel
         # grabs the targeted channel, stores in self
-        ctrl.autoBetDataSignal.emit({"status": self.betStatus})
+        ctrl.autoBetDataSignal.emit({"type": "status", "status": self.betStatus})
         # tells the auto-bet window what the current status is
 
 ### Output Manager Thread ###
@@ -7004,32 +7124,66 @@ class AutoBetWindow(QObject):
                 # doesn't proceed
             self.refresh.wait(timeout=10)
             # waits 10 seconds, unless there's an event
-            if self.betStatus and self.selectedChannel:
-            # if the auto-betting is enabled and there's a real channel
+            if self.selectedChannel:
+            # if there's a real channel set
                 betDict = grabPrediction(self.state, self.selectedChannel)
                 # calls the prediction grabbing function with the selected channel
                 if betDict["success"]:
                 # successful grab
                     actives = betDict["active"]
                     # checks the active dictionary entry (list of active events, length 0 or 1)
+                    resolved = betDict["resolved"]
+                    # checks the resolved dictionary entry (list of resolved payouts, length of 0 or 1)
                     balDict = pointGrabber(self.state, self.selectedChannel)
                     # calls the balance grabbing function with the selected channel
                     if balDict["success"]:
                     # successful grab
-                        inputDict = {"channel": self.selectedChannel, "balance": balDict["points"], "pointsName": balDict["pointsName"]}
-                        # forms a dictionary from the return
-                        ctrl.autoBetDataSignal.emit(inputDict)
-                        # calls the input function to pass the dictionary, updates UI
-                        if len(actives) > 0:
-                        # if there's at least 1 active prediction (0 / 1)
-                            activePrediction = actives[0]
-                            # grabs the 0th prediction
-                            if not self.pastEvents.get(activePrediction["id"], None):
-                            # if there's an active prediction and there's no record of it yet
-                                activePrediction["balance"] = balDict["points"]
-                                # adds the balance to the active dictionary 
-                                self.openPrediction.emit(activePrediction)
-                                # sends the bet dictionary via a pyqt signal to the bet handler function
+                        if self.selectedBalance != balDict["points"]:
+                        # if the balance returned isn't the same as the stored balance
+                            inputDict = {"type": "balance", "balance": balDict["points"], "pointsName": balDict["pointsName"]}
+                            # forms a dictionary from the return
+                            ctrl.autoBetDataSignal.emit(inputDict)
+                            # calls the input function to pass the dictionary, updates UI
+                            self.selectedBalance = balDict["points"]
+                            # stores the new amount in self
+                        if self.betStatus:
+                        # if betting is enabled
+                            if actives and len(actives) > 0:
+                            # if there's at least 1 active prediction
+                                activePrediction = actives[0]
+                                # grabs the 0th prediction
+                                if not self.pastEvents.get(activePrediction["id"], None):
+                                # if there's an active prediction and there's no record of it yet
+                                    activePrediction["balance"] = balDict["points"]
+                                    # adds the balance to the active dictionary 
+                                    self.openPrediction.emit(activePrediction)
+                                    # sends the bet dictionary via a pyqt signal to the bet handler function
+                            elif resolved and len(resolved) > 0:
+                            # if there's no open prediction, but at least 1 paid out prediction
+                                resolvedPrediction = resolved[0]["node"]
+                                # grabs the 0th prediction's node
+                                resolvedID = resolvedPrediction["id"]
+                                # grabs the ID
+                                if self.pastEvents.get(resolvedID, None):
+                                # if there's a paid out prediction and there's records of it
+                                    if self.pastEvents[resolvedID]["payout"] is None:
+                                    # if there's not already a stored entry for that ID's payout
+                                        recents = betDict["recents"]
+                                        # grabs the list of recent predictions
+                                        pointData = None
+                                        # makes an empty variable
+                                        for prediction in recents:
+                                        # goes through every prediction in the list of recent own predictions for that channel
+                                            if resolvedID == prediction["event"]["id"]:
+                                            # checks if there's a match with the user's previous votes
+                                                pointData = {"bet": prediction["points"], "gain": prediction["pointsWon"]}
+                                                # forms a tiny dictionary, stores it
+                                        if pointData:
+                                        # if there was a match (pointData isn't None anymore)
+                                            ctrl.autoBetDataSignal.emit({"type": "payout", "data": pointData})
+                                            # sends it via the visual signal
+                                            self.pastEvents[resolvedID]["payout"] = pointData
+                                            # stores it in self, to prevent new checks with the same event
             self.refresh.clear()
             # clears the event
             self.betLock.release()
@@ -7041,8 +7195,10 @@ class AutoBetWindow(QObject):
         """Function to handle the past events to ensure no duplicate bets are placed"""
         if not eventDict["eventID"] in self.pastEvents:
         # checks if the eventID has already been entered into the pastevents (continues if not)
-            self.pastEvents[eventDict["eventID"]] = eventDict["bet"]
+            self.pastEvents[eventDict["eventID"]] = {"bet": eventDict["bet"], "payout": None}
             # stores the bet inside the past events map under the event ID
+            ctrl.autoBetDataSignal.emit({"type": "bet"})
+            # sends a visual update to update the bets made counter (the dict doesn't get read)
 
 ### Bet Handler ###
 
@@ -7080,13 +7236,13 @@ class AutoBetWindow(QObject):
         # goes through each outcome and its ID
             outcome = activeOutcomes[x]
             # gets the xth element of the list (0 to (min 2, max 10))
-            outcomeName = outcome["title"]
-            outcomeID = outcome["id"]
+            outcomeName = outcome["title"].lower().strip()
+            outcomeID = outcome["id"].strip()
             # gets the ID and the name of the outcome in question
             outcomeList.append(outcomeName)
             outcomeIDList.append(outcomeID)
             # adds the IDs to the list in order (1-X)
-            if outcomeName.lower().strip() in self.targetOutcomes:
+            if outcomeName in self.targetOutcomes:
             # if there's a name-matched outcome with a targeted one (eg. Loss and loss (since it gets lowered/stripped))
                 outcomeToBet = outcomeID
                 # sets the outcome to bet on as the outcome ID matching the name-matched one
@@ -7133,16 +7289,21 @@ class AutoBetWindow(QObject):
             # user inform
         else:
         # if an outcome is defined
+            outcomeIndex = outcomeIDList.index(outcomeToBet)
+            # gets the index of the outcome ID to bet on
+            outcomeName = outcomeList[outcomeIndex]
+            # grabs the name of the corresponding outcome title
+
             if self.betSize:
             # if the bet size is defined, and isn't None
+                balance = int(predictionDict.get("balance", 0))
+                # gets the balance from the passed dictionary
                 if type(self.betSize) == int:
                 # if it's an integer
                     betToSet = self.betSize
                     # the bet to use is that defined integer
                 else:
                 # if it's not an int (it should be a string, "default", otherwise using )
-                    balance = int(predictionDict.get("balance", 0))
-                    # gets the balance from the passed dictionary
                     if roundBalanceBet:
                     # if balance rounding is enabled
                         if stageBetBoolean:
@@ -7162,26 +7323,32 @@ class AutoBetWindow(QObject):
                     # balance rounding isn't enabled
                         betToSet = defaultBet
                         # uses the default bet size
-
-                ctrl.taskChange.emit(f"Auto-betting {betToSet:,.0f} on {self.selectedChannel}...")
-                # user inform
-                QThread.msleep(500)
-                # waits 500ms (small delay)
-                predictionResult = sendPrediction(self.state, betToSet, eventID, outcomeToBet)
-                # sends the prediction details to the betting function
-                if predictionResult["success"]:
-                # if the bet was successful
-                    ctrl.taskChange.emit(f"Successfully bet {betToSet:,.0f} on {self.selectedChannel}!")
-                    # user inform
-                    ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": betToSet})
-                    # adds the event's bet into history to prevent a second bet
+                    if betToSet < minimumBet:
+                    # if the bet is smaller than minimum bet
+                        if minimumBet >= balance:
+                        # if the minimum bet is greater or eq to the channel balance
+                            betToSet = minimumBet
+                            # overrides to minimum
+                        else:
+                        # if not
+                            betToSet = balance
+                            # uses the remaining balance
+                if betToSet > balance:
+                # if the bet is larger than the available balance
+                    ctrl.taskChange.emit(f"Failed to auto-bet on {self.selectedChannel}! Bet exceeds balance!")
+                    # user inform of error
                 else:
-                    ctrl.taskChange.emit(f"Failed to place a bet on {self.selectedChannel} due to {predictionResult["error"]}")
-                    # user inform with error message
+                # if there's more points available than required for the bet
+                    ctrl.taskChange.emit(f"Auto-betting {betToSet:,.0f} on {self.selectedChannel}...")
+                    # user inform
+                    QThread.msleep(500)
+                    # waits 500ms (small delay)
+                    ctrl.makeBet.emit(int(betToSet), eventID, outcomeToBet, outcomeName, False, True)
+                    # sends the prediction details to the betting signal -> bet function
             else:
             # bet size isn't defined/is None
                 ctrl.taskChange.emit("No bet size defined! Can't place prediction")
-                # user inform
+                # user inform of error
 
 
 
@@ -7210,8 +7377,8 @@ class SuperController(QObject):
     """A pyQt signal to change the prediction/balance refresh timer"""
     predictionTimerOverride = pyqtSignal()
     """A pyQt signal to set an event and immediately override timer"""
-    makeBet = pyqtSignal(int, str, str, str, bool)
-    """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str, addon: bool)"""
+    makeBet = pyqtSignal(int, str, str, str, bool, bool)
+    """A pyQt signal to form a bet (bet: int, eventID: str, outcomeID: str, name: str, addon: bool, auto-bet: bool)"""
     stopPredictionWorker = pyqtSignal()
     """A pyQt signal to stop the prediction worker"""
     newChannelSignal = pyqtSignal()

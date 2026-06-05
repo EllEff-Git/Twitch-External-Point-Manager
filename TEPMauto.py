@@ -75,7 +75,7 @@ class asyncAutoBetWindow(QMainWindow):
         self.setCentralWidget(self.container)
         # sets the main widget to display
 
-        self.textSwapSignal.connect(self.textModifier)
+        self.textSwapSignal.connect(self.balanceModifier)
         # connects the text signal to the modifying function
 
     ### Variables ###
@@ -94,6 +94,10 @@ class asyncAutoBetWindow(QMainWindow):
         """Tracker for confirm presses"""
         self.checkCount = 0
         """Tracker for parent process checks"""
+        self.gainedPoints = 0
+        """Tracker for points gained during auto-bet session"""
+        self.predictionsMade = 0
+        """Tracker for how many predictions were made"""
 
     ### Channel ###
 
@@ -133,7 +137,14 @@ class asyncAutoBetWindow(QMainWindow):
         self.swapChannelButton.clicked.connect(self.swapChannel)
         # connects the button to the function
 
-    ### Balance & Warning ###
+    ### Status & Details ###
+
+        self.statusDetailLayout = QGridLayout()
+        """A layout for the auto-bet detail labels and such"""
+        self.statusDetailLayout.setColumnMinimumWidth(0, 400)
+        # sets the (only) column to use a min width of 400 (matches the other elements below)
+        self.mainLayout.addLayout(self.statusDetailLayout, 2, 0, 2, 1, alignment=Qt.AlignmentFlag.AlignCenter)
+        # adds to the main layout, under the channel label/swap
 
         self.balanceLabel = QLabel("Balance")
         """Balance label"""
@@ -165,6 +176,16 @@ class asyncAutoBetWindow(QMainWindow):
         self.statusLabel.setToolTip("Auto-better status")
         # tooltip
 
+        self.predictionNumLabel = QLabel("Auto-bet on 0 predictions")
+        """Label to display current bet count"""
+        self.predictionNumLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+
+        self.gainLabel = QLabel(" ")
+        """Label to display current point gains from auto-bets"""
+        self.gainLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # centers the text
+
         self.warningLabel = QLabel(" ")
         """Label to display warning(s) in"""
         self.warningLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -180,9 +201,11 @@ class asyncAutoBetWindow(QMainWindow):
         self.warningLabel.setToolTip("Status message")
         # tooltip
 
-        self.mainLayout.addWidget(self.balanceLabel, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.mainLayout.addWidget(self.statusLabel, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.mainLayout.addWidget(self.warningLabel, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.statusDetailLayout.addWidget(self.balanceLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.statusDetailLayout.addWidget(self.statusLabel, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.statusDetailLayout.addWidget(self.predictionNumLabel, 2, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.statusDetailLayout.addWidget(self.gainLabel, 3, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.statusDetailLayout.addWidget(self.warningLabel, 4, 0, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds all to layout
 
     ### Fields ###
@@ -215,7 +238,7 @@ class asyncAutoBetWindow(QMainWindow):
         # placeholder text
         self.betLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
-        self.betLine.setToolTip(f'Enter the bet size you would like to use\nAccepts any integer (non-decimal number) or "Default"\n')
+        self.betLine.setToolTip(f'Enter the bet size you would like to use\nAccepts any integer (non-decimal number) or "Default"\n"Default" follows the rounding/staged guides, if set in config')
         # tooltip
 
         self.betLineText = QLabel("The bet size to use")
@@ -330,10 +353,8 @@ class asyncAutoBetWindow(QMainWindow):
 
 ### Modify Text Fields ###
 
-    def textModifier(self, balance:int, pointsName:str):
-        """Function to swap the text in channel and balance label"""
-        self.channelLabel.setText(self.selectedChannel)
-        # sets the text label to match
+    def balanceModifier(self, balance:int, pointsName:str):
+        """Function to swap the balance label"""
         self.balanceLabel.setText(f"Balance: {balance:,.0f} {pointsName}")
         # sets the balance string
 
@@ -414,31 +435,62 @@ class asyncAutoBetWindow(QMainWindow):
             predictionDict = json.loads(line)
             # loads the sent line as a json dictionary
 
-            if predictionDict.get("status", None) is not None:
-            # if the Status is set in the dictionary (it's a status return)
+            if predictionDict["type"] == "status":
+            # if the type is status (enabled/disabled check)
                 status = predictionDict["status"]
                 # grabs the status boolean
                 self.statusUpdater(status)
                 # calls the label updater based on the status boolean
-            elif predictionDict.get("exit", None) is not None:
-            # if the Exit is set in the dictionary (main program closed)
+
+            elif predictionDict["type"] == "exit":
+            # if the type is an exit command
                 autoBetWindowApp.exit()
                 # exits the app
-            else:
-                channel = predictionDict["channel"].strip()
-                # gets the passed channel (should be the same)
-                balance = int(predictionDict["balance"])
+
+            elif predictionDict["type"] == "bet":
+            # if the type is a bet (made a bet)
+                self.predictionsMade += 1
+                # adds 1 to predictions made
+                if self.predictionsMade == 1:
+                # if it's at 1 now
+                    self.predictionNumLabel.setText(f"Auto-bet on 1 prediction")
+                    # changes the label to match
+                else:
+                    self.predictionNumLabel.setText(f"Auto-bet on {self.predictionsMade} predictions")
+                    # changes the label to match
+
+            elif predictionDict["type"] == "payout":
+            # if the type is a payout update (win/loss -> gain label)
+                gain = int(predictionDict["data"]["gain"])
+                # gets the points "gained"
+                bet = int(predictionDict["data"]["bet"])
+                # gets the points bet
+                total = (gain - bet)
+                # gets the total difference (points won, or how many points were lost if gain is 0)
+                self.gainedPoints += total
+                # adds to the running total
+                self.predictionNumLabel.setText(f"Points gained from auto-bet: {self.gainedPoints:,.0f}")
+                # changes the label to match formatted total
+
+            elif predictionDict["type"] == "balance":
+            # if the type is a balance update
+                balance = predictionDict["balance"]
                 # gets the passed balance
                 pointsName = predictionDict["pointsName"]
                 # gets the name of the points
+                self.textSwapSignal.emit(balance, pointsName)
+                # sends a signal to swap the balance and name of the points
 
+            elif predictionDict["type"] == "channel":
+            # if the type is channel 
+                channel = predictionDict["channel"].strip()
+                # gets the passed channel
                 if channel and self.selectedChannel != channel:
                 # if the selected channel doesn't match the current one in this view (and it's defined)
                     self.selectedChannel = channel
                     # sets it to match
-                
-                self.textSwapSignal.emit(balance, pointsName)
-                # sends a signal to swap the channel label and balance
+                    self.channelLabel.setText(self.selectedChannel)
+                    # sets the text label to match
 
 
 
