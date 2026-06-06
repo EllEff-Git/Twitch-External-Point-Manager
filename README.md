@@ -49,7 +49,7 @@ Prediction History: <br/>
 Auto-Bet View: <br/>
 ![Imgur Image](https://i.imgur.com/j4Fd9h4.png)
 
-Point/Streak View:
+Point/Streak View: <br/>
 ![Imgur Image](https://i.imgur.com/GslP0sR.png)
 
 <br>
