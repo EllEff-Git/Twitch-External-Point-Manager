@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import *
 
 
 
-tepmVer = "0.6.5.2129"
+tepmVer = "0.6.6.1259"
 """TEPM program version (Y.MM.DD.HHMM)"""
 
 
@@ -235,8 +235,8 @@ class StarterWindow(QWidget):
         # tooltip
         self.exitButton.setMinimumSize(150, 50)
         # size
-        self.exitButton.clicked.connect(lambda: app.exit())
-        # connects to exit
+        self.exitButton.clicked.connect(self.exit)
+        # connects to exit function
         self.mainPageLayout.addWidget(self.exitButton, 2, 1, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignCenter)
         # adds to layout (bottom middle)
 
@@ -791,7 +791,18 @@ class StarterWindow(QWidget):
         self.firstTimeUI()
         # runs the first time UI checker to see if the first time UI should appear or not
 
+### Exit Function ###
 
+    def exit(self):
+        """Function to exit the program"""
+        if ctrl.mainWindow is not None:
+        # if the mainWindow (tepm) is defined (user has visited it at least once)
+            ctrl.mainWindow.starterExitSignal.emit()
+            # sends a signal via the main window's exit call -> cleaner, more encompassing shut down
+        else:
+        # main window is not defined (yet)
+            app.exit()
+            # closes the app
 
 ### Label Changer ###
 
@@ -799,8 +810,6 @@ class StarterWindow(QWidget):
         """Function to change the passed label"""
         self.mainLabel.setText(text)
         # sets the progress label to match the passed text
-
-
 
 ### First Time UI ###
 
@@ -847,8 +856,6 @@ class StarterWindow(QWidget):
             self.mainStack.setCurrentWidget(self.profilePickPage)
             # sets active page to the profile picking page
 
-
-
 ### User Profile Name ###
 
     def userNameGrab(self):
@@ -887,8 +894,6 @@ class StarterWindow(QWidget):
         QTimer.singleShot(waitTimer, self.hashLoader)
         # waits a time, then calls intermediary function
 
-
-
 ### Hash Load ###
 
     def hashLoader(self):
@@ -920,8 +925,6 @@ class StarterWindow(QWidget):
 
         self.configWindow()
         # calls the config window to proceed
-
-
 
 ### Configuration Window ###
 
@@ -985,8 +988,6 @@ class StarterWindow(QWidget):
         # sets the task page visible
         self.optionsButton.setEnabled(True)
         # enables the options button
-
-
 
 ### Modify Configuration ###
 
@@ -1125,8 +1126,6 @@ class StarterWindow(QWidget):
             QTimer.singleShot(2000, lambda: self.mainStack.setCurrentWidget(self.taskPage))
             # runs the task chooser config slower (user can see prompt)
 
-
-
 ### Update Checker ###
 
     def checkUpdate(self):
@@ -1181,8 +1180,6 @@ class StarterWindow(QWidget):
             self.versionTag.setText(f"TEPM v{self.version}\nUpdate check failed")
             # error prompt
 
-
-
 ### Subtask Selection -> Task Run ###
 
     def taskChooser(self, task: str, taskNum: int):
@@ -1217,8 +1214,6 @@ class StarterWindow(QWidget):
             QTimer.singleShot(1500, lambda: self.taskRunner(5))
             # calls taskRunner after 1.5s
 
-
-
 ### Task Run ###    
 
     def taskRunner(self, task:int=None, subtask:int=None, channel:str=None):
@@ -1239,12 +1234,15 @@ class StarterWindow(QWidget):
             if subtask == 1:
             # subtask 1 is just points
                 enablePoints = True
+                enableStreaks = False
+                activeOnly = False
                 # sets the points to True (streaks stays false)
             elif subtask == 2:
             # subtask 2 is points and streaks
                 enablePoints = True
                 enableStreaks = True
-                # sets both booleans to True
+                activeOnly = False
+                # sets all booleans to True
             signalStr = "Points"
             # sets the signal string to use
 
@@ -1252,10 +1250,13 @@ class StarterWindow(QWidget):
         # task 2 is streaks-related
             if subtask == 1:
             # subtask 1 is all streaks
+                enablePoints = False
                 enableStreaks = True
+                activeOnly = False
                 # sets the streaks to True (points stays false)
             elif subtask == 2:
             # subtask 2 is active streaks
+                enablePoints = False
                 enableStreaks = True
                 activeOnly = True
                 # sets the streak-related booleans to True
@@ -1318,16 +1319,12 @@ class StarterWindow(QWidget):
             QTimer.singleShot(1500, lambda: self.goToMainWindow(signalStr))
             # quits the starter application window with a small delay
 
-        
-
 ### Starter -> Main Window ###
 
     def goToMainWindow(self, action):
         """Function to call when a stop is needed (with a delay)"""
         self.starterDone.emit(action)
         # sends a signal to the pyQt signal to let the controller / main window know starter is ready
-
-
 
 ### Return to Menu ###
 
@@ -1359,6 +1356,8 @@ class tepmWindow(QWidget):
     """A pyQt signal to set the prediction user prompt"""
     sendAutoBetData = pyqtSignal()
     """A pyQt signal to have auto-better request an initial data dictionary"""
+    starterExitSignal = pyqtSignal()
+    """A pyQt signal to exit the program fully via the starter menu (if user already returned to menu once)"""
 
     def __init__(self, state, passedProfile):
         super().__init__()
@@ -2398,38 +2397,28 @@ class tepmWindow(QWidget):
 
         self.clearBetShortcut = QShortcut(QKeySequence("Ctrl+Y"), self)
         # forms a keybind for clearing the bet field
-        self.clearBetShortcut.activated.connect(lambda: self.betMasker("Clear"))
-        # connects the keybind to the bet masking function
+        self.clearBetShortcut.activated.connect(lambda: (self.setFocus(), self.betMasker("Clear")))
+        # connects the keybind to resetting the focus and the bet masking function
 
         self.doubleBetShortcut = QShortcut(QKeySequence("Ctrl+G"), self)
         # forms a keybind for doubling the current bet
         self.doubleBetShortcut.activated.connect(lambda: self.betMasker("Double"))
         # connects the keybind to the bet masking function
 
-        self.halveBetShorcut = QShortcut(QKeySequence("Ctrl+H"), self)
+        self.halveBetShortcut = QShortcut(QKeySequence("Ctrl+H"), self)
         # forms a keybind for halving the current bet
-        self.halveBetShorcut.activated.connect(lambda: self.betMasker("Halve"))
+        self.halveBetShortcut.activated.connect(lambda: self.betMasker("Halve"))
         # connects the keybind to the bet masking function
 
-        self.quickBetShorcut = QShortcut(QKeySequence("Ctrl+Q"), self)
+        self.quickBetShortcut = QShortcut(QKeySequence("Ctrl+Q"), self)
         # forms a keybind for quick-betting default
-        self.quickBetShorcut.activated.connect(lambda: self.betMasker("Quick"))
+        self.quickBetShortcut.activated.connect(lambda: self.betMasker("Quick"))
         # connects the keybind to the bet masking function
 
         self.savePredictionShorcut = QShortcut(QKeySequence("Ctrl+S"), self)
         # forms a keybind for saving the prediction history
         self.savePredictionShorcut.activated.connect(self.savePredictions)
         # connects the keybind to the prediction saving function
-
-        self.predictionShortcuts = [self.predictBetShortcut, self.defaultBetShortcut, self.maxBetShortcut,
-                                    self.clearBetShortcut, self.doubleBetShortcut, self.halveBetShorcut,
-                                    self.savePredictionShorcut]
-        """A list of prediction-related shortcuts (keybinds)"""
-
-        for shortcut in self.predictionShortcuts:
-        # goes through every shortcut
-            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            # ensures the shortcut functions at "application-level" (doesn't get overwritten by focused elements, etc)
 
 
 
@@ -2484,17 +2473,6 @@ class tepmWindow(QWidget):
         # forms a keybind for betting on outcome 10
         self.outcome10Bind.activated.connect(lambda: self.predictOutcomeKeybinds(10))
         # calls the predict outcome keybind selector function with 10
-
-        self.outcomeShortcuts = [self.outcome1Bind, self.outcome2Bind, self.outcome3Bind,
-                                self.outcome4Bind, self.outcome5Bind, self.outcome6Bind,
-                                self.outcome7Bind, self.outcome8Bind, self.outcome9Bind,
-                                self.outcome10Bind]
-        """A list of outcome shortcuts (keybinds)"""
-
-        for shortcut in self.outcomeShortcuts:
-        # goes through every shortcut
-            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
-            # ensures the shortcut functions at "application-level" (doesn't get overwritten by focused elements, etc)
 
 
 
@@ -2695,32 +2673,19 @@ class tepmWindow(QWidget):
         # connects to the menu
         self.exitButton.clicked.connect(self.backToTheLobby)
         # connects to the exit function
+        self.starterExitSignal.connect(self.backToTheLobby)
+        # connects the starter call to exit to the exit function
 
 
 
-    ### Full Element Lists ###
-
-        self.pointGrabItems = [self.progressBar, self.channelLabel, self.totalLabel, self.currentLabel]
-        """A list of point grab elements"""
+    ### Prediction Button Policing ###
 
         self.predictActionButtons = [self.maxBetButton, self.defaultBetButton, self.predictBetButton, 
-                                    self.predictChannelSwapButton, self.detailsButton, 
+                                    self.predictChannelSwapButton, self.detailsButton, self.autoBetButton, 
                                     self.historyButton, self.modButton, self.helpButton, self.menuButton, self.exitButton, 
                                     self.predictChannelSwapButton, self.predictChannelPreviousButton,
                                     self.predictChannelRemoveButton, self.predictChannelNextButton]
         """A list of prediction-view buttons"""
-
-        self.predictItems = [self.predictChannelLabel, self.predictChannelStatus, self.predictStatusLabel, self.predictLastUpdateLabel,
-                            self.predictInfoLabel, self.predictDetailLabel, self.predictTimerLabel,
-                            self.predictPoolLabel, self.predictResultLabel, self.predictTaskLabel,
-                            self.currentBetLabel, self.predictPointLabel, self.predictAmountLine, 
-                            self.predictBetButton, self.maxBetButton, self.defaultBetButton, 
-                            self.modButton, self.detailsButton, self.helpButton,
-                            self.historyButton, self.predictChannelLine, self.predictChannelSwapButton,
-                            self.predictChannelPreviousButton, self.predictChannelRemoveButton, self.predictChannelNextButton]
-        """A list of prediction elements"""
-
-    ### Prediction Button Policing ###
 
         for button in self.predictActionButtons:
         # goes through each button in the list of action buttons
@@ -2801,7 +2766,7 @@ class tepmWindow(QWidget):
         """A function to manage the progress bar and channel name"""
 
         dictType = progressDict["type"]
-        # the type of dictionary sent (full or single)
+        # the type of dictionary sent (Full, Single or Active)
 
         if dictType == "Full":
         # if the dictionary is a full one (going through a list of channels)
@@ -2824,7 +2789,7 @@ class tepmWindow(QWidget):
             # the current channel's streak
             expiryDateRaw = progressDict["expiresAt"]
             # grabs all the relevant information from the passed dictionary
-            if expiryDateRaw:
+            if expiryDateRaw is not None:
             # if it's set and not False
                 expiryDateUTC = datetime.datetime.fromisoformat(expiryDateRaw.replace("Z", "+00:00"))
                 # formats it to datetime 
@@ -2833,131 +2798,139 @@ class tepmWindow(QWidget):
                 expiryDate = expiryDateLocal.strftime("%B %d at %I:%M %p").replace(" 0", " ")
                 # finalizes it into eg. "April 21 at 11:06 AM" (the example I had)
             else:
-                expiryDate = False
+            # no expiry date (streak is alive)
+                expiryDate = None
                 # disables
 
             percentage = int(((index + 1) / self.channelLength ) * 100)
             # calculates the current percentage (index+1 out of the total = 0-1 * 100 = percentage)
-
             self.progressBar.setValue(percentage)
             # sets the progress bar value
 
             if streaksOn:
             # if streaks are being checked
-                if streak > 0:
-                # if there's a streak
-                    streakString = f"streak of {streak}"
-                    # forms a string with the streak
-
+                if streak > 1:
+                # if there's a streak (1 doesn't give points)
+                    streakString = f"streak of {streak:,.0f}"
+                    # forms a string with the streak (thousands-formatted)
                     if streak < 10:
                     # if the streak is > 0 but < 10
                         if streak < 7:
                         # if the streak is < 7
                             if streak < 3:
-                            # if the streak is < 3
-                                streakPoints = ((streak - 1) * 350)
-                                # total is 350 or 0 (either it's 2 -> 1 or 1 -> 0)
+                            # if the streak is < 3 (0 and 1 are already not included)
+                                streakPoints = (600)
+                                # 300 + 300 (new streak checkpoint at 2)
                             elif streak == 3:
                             # streak is exactly 3
-                                streakPoints = (1050)
-                                # total is just 1050 (3 * 350)
+                                streakPoints = (600 + 700)
+                                # total is 600 + 700 (2x350)
                             elif streak == 4:
                             # streak is exactly 4
-                                streakPoints = (1050 + 400)
-                                # total is 1050 for first 3 days + 400 for 4th day (only custom value)
+                                streakPoints = (1300 + 400)
+                                # total is 1300 for first 3, then 400 for day 4 (+ 400)
                             elif streak == 5:
                             # streak is exactly 5
-                                streakPoints = (1050 + 400 + 900)
-                                # total is 1050 for 3, 400 for 4 and 900 for 5
+                                streakPoints = (1700 + 900)
+                                # total is 1700 for first 4, then 900 for day 5 (2 * 450)
                             else:
-                            # 7 > streak > 5
-                                streakPoints = (streak - 5) * 450
-                                # calculates the amount over 5
-                                streakPoints += (1050 + 400 + 900)
+                            # streak is exactly 6
+                                streakPoints = (2600 + 450)
                                 # adds the first 5 days worth
                         elif streak == 7:
                         # streak is exactly 7
-                            streakPoints = (1050 + 2200)
-                            # adds up the points earned in the first 7 days (1050 + (4 * 450 + 400))
+                            streakPoints = (3050 + 900)
+                            # adds up the points earned in the first 7 days (3050 for 6, then 2 * 450)
                         else:
-                        # 10 > streak > 7
+                        # streak is 8 or 9
                             streakPoints = ((streak - 7) * 450)
-                            # calculates the amount over 7
-                            streakPoints += (1050 + 2200)
+                            # calculates the amount over 7 (1 or 2 * 450)
+                            streakPoints += (3950)
                             # adds the first 7 days worth
                     elif streak == 10:
                     # if the streak is exactly 10
-                        streakPoints = (1050 + 2200 + 1800)
-                        # adds up the points earned from first 10 days
+                        streakPoints = (4850 + 900)
+                        # adds up the points earned from first 10 days (4850 for 9, then 2 * 450)
                     else:
                     # streak is > 10
-                        streakPoints = (1050 + 2200 + 1800)
-                        # first calculates the first 10 days of points
+                        streakPoints = (5750)
+                        # sets it to the first 10 days
                         batches, remainder = divmod((streak - 10), 5)
-                        # divides the streak-10 by 5 (batches of streaks)
+                        # divides the (streak-10) by 5 (batches of streaks)
                         streakPoints += (batches * (450 * 6))
                         # adds up the batches (5 * 450 for the days, +450 per batch for bonus)
                         streakPoints += (remainder * 450)
                         # adds up the remainder (450 per day)
-
                 else:
                 # if the streak is 0
                     streakString = f"no active streak"
                     # forms a none-streak string
                     streakPoints = 0
                     # point total is 0
+            streakPoints = f"{streakPoints:,.0f}"
+            # formats the total points (eg. 1,350,500 vs 1350500)
 
             if pointsOn:
             # if point-checking is enabled
-                if points == "Not checked":
-                # if the points have a set string
+                if points is None:
+                # if the points weren't caught
                     pointString = f""
                     # sets the point string to empty
                     midString = "A"
                     # makes the midString "A" -> "A streak of"
                 else:
                 # if the points are set to something else (a number)
-                    pointString = f"{points:,} points found"
-                    # formats the number to use formatting (no decimals, thousand comma)
+                    pointString = f"{points:,.0f} points"
+                    # formats the point balance (eg. 24,593,204 vs 24593204)
                     if streaksOn:
                     # if streaks are enabled
-                        midString = f" and a"
-                        # "x points found and a streak of"
+                        if streak > 1:
+                        # if there's even a small streak
+                            midString = f" and a"
+                            # "x points and a streak of y found for..."
+                        else:
+                        # no streak
+                            midString = f" with"
+                            # "x points with no active streak found for..."
+                    else:
+                    # if streaks are off
+                        midString = f" found"
+                        # "x points found for..."
 
-                if total == "Not checked":
+                if total is None:
                 # if the total is unchecked (no point gathering)
                     totalString = f""
                     # sets to empty
                 else:
                 # if the total is not that (number)
-                    totalString = f"Points across channels: {total:,}"
+                    totalString = f"Points across channels: {total:,.0f}"
                     # formats the total number
 
-                if error:
+                if error is not None:
                 # if there's an error reported
-                    self.channelLabel.setText(f"Error with {channel}, couldn't get points")
+                    self.channelLabel.setText(f"Error with {channel}, couldn't get points!")
                     # sets an error text
                 else:
                 # if no error
                     if streaksOn:
                     # if the streaks are enabled
-                        if expiryDate:
-                        # if the expiry date is set
+                        if expiryDate is None:
+                        # if the expiry date isn't set
                             if streak > 0:
                             # active, real streak
-                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nThis streak is worth {streakPoints:,.0f} points")
+                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for:\n{channel}\nThis streak is worth {streakPoints} points")
                                 # sets the text to match
                             else:
-                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}")
+                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for:\n{channel}")
                                 # points, no streak length (set string) and no streak points
                         else:
                         # if there's an expiry date
                             if streak > 0:
                             # active, real streak
-                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nThis streak is worth {streakPoints:,.0f} points\nStreak expiring at {expiryDate}!")
+                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for:\n{channel}\nThis streak is worth {streakPoints} points\nStreak expiring at {expiryDate}!")
                                 # sets warning
                             else:
-                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for {channel}\nStreak expiring at {expiryDate}!")
+                                self.channelLabel.setText(f"{pointString}{midString} {streakString} found for:\n{channel}\nStreak expiring at {expiryDate}!")
                                 # sets the text to match
                     else:
                     # streaks disabled
@@ -2966,21 +2939,18 @@ class tepmWindow(QWidget):
 
                 self.totalLabel.setText(f"{totalString}")
                 # sets the total string to match
-
             else:
             # if point-checking isn't enabled (must mean streaks are)
                 self.totalLabel.setText("")
                 # clears the total label
-                if error:
+                if error is not None:
                 # if there's an error
                     self.channelLabel.setText(f"Error with {channel}, couldn't get streak")
                     # sets an error text
                 else:
                 # if no error
-
                     streakVerbose = ""
                     # empty placeholder string
-
                     if 35 < streak < 366:
                     # doesn't trigger any checks if below 36 or above 366
                         if streak == 36 or streak == 37:
@@ -3005,10 +2975,8 @@ class tepmWindow(QWidget):
                     # streak is over 1y364d
                         if streak % 365 == 0 or streak % 366 == 0:
                             # if the streak is divisible by 365 or 366 and leaves nothing
-
                             year = int(streak // 365)
                             # stores the year to 0 decimal points (since 366 can also fit here, it could return Y.00273972602)
-
                             if (year % 100) > 3:
                             # checks if the streak being divided lands between 10 and 20 ()
                                 suffix = "th"
@@ -3017,7 +2985,6 @@ class tepmWindow(QWidget):
                             # if not
                                 suffix = {2: "nd", 3: "rd"}.get(year % 10, "th")
                                 # suffix is selected separately ("2nd" or "3rd", falls back to "th" if doesn't match 2 or 3)
-                            
                             streakVerbose = f"Happy {year}{suffix} streakaversary!"
                             # string with year + suffix (2nd, 3rd or nth)
 
@@ -3029,20 +2996,21 @@ class tepmWindow(QWidget):
                     # if streak is <100, and one of: the first number of streak is an 8 (eighty-X or just 8) or it's 11 or 18
                         if not expiryDate:
                         # no expiry date
-                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}")
+                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}")
                             # sets the text to match (it has "an" as prefix, not "a")
                         else:
                         # if there's a date
-                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
+                            self.channelLabel.setText(f"{channel} has an {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
                             # sets the text to match (it has "an" as prefix, not "a")
                     else:
+                    # streak is >100 and has no 8 starter and it's not 11 or 18 (no need for "an")
                         if not expiryDate:
                         # no expiry date
-                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}")
+                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}")
                             # sets the text to match
                         else:
                         # yes expiry date
-                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints:,.0f} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
+                            self.channelLabel.setText(f"{channel} has a {streak} day streak!\nThis streak is worth {streakPoints} points!\n{streakVerbose}\nStreak expires at {expiryDate}!")
                             # sets text with streak warning
 
             self.currentLabel.setText(f"{(index + 1)} / {self.channelLength}")
@@ -3062,7 +3030,7 @@ class tepmWindow(QWidget):
             pointString = f"{points:,.0f} points"
             # formats the number to use formatting (no decimals, thousand comma)
 
-            if error:
+            if error is not None:
             # if there's an error reported
                 self.channelLabel.setText(f"Error with {channel}, couldn't get points")
                 # sets an error text
@@ -3070,6 +3038,13 @@ class tepmWindow(QWidget):
             # no error ->
                 self.channelLabel.setText(f"{pointString} and a streak of {streak} found for {channel}")
                 # sets the text to match
+
+        elif dictType == "Active":
+        # it's a "warning" about the active-only status
+            self.channelLabel.setText(f"Currently checking active-only channels\n"
+                                      "Please be aware the process may appear stuck, if the list of streams is long\n"
+                                      "The program minimises usage by not updating UI for inactive streaks, this is normal")
+            # user inform about the active-only list process
 
 
 
@@ -3087,8 +3062,8 @@ class tepmWindow(QWidget):
         # if points are enabled
             if enableStreaks:
             # if streaks are enabled
-                self.totalLabel.setText(f"{preFinalText} - highest streak: {streak}")
-                # makes the total label state the max streak as well
+                self.totalLabel.setText(f"{preFinalText}\nLongest streak: {streak}")
+                # makes the total label include the max streak
             else:
             # if streaks aren't enabled
                 self.totalLabel.setText(f"{preFinalText}")
@@ -3115,7 +3090,7 @@ class tepmWindow(QWidget):
                 # forms a string like: "caseoh_: may 17th"
                 expiryStringList.append(entryString)
                 # adds the string into the list
-            expiryString = f"Channels with expiring streaks: {", ".join(expiryStringList)}"
+            expiryString = f"Channels with expiring streaks: {", ".join(expiryStringList)}\n\n"
             # turns the list into a string
 
         if not overrideChannel:
@@ -3124,8 +3099,8 @@ class tepmWindow(QWidget):
             # if there was at least one error
                 finalString = (
                             f"All channels scoured - stats have been saved to CSV!\n\n"
-                            f"TEPM was unable to store points for {errors} out of {len(self.channels)} channels\n\n"
-                            f"{expiryString}\n\n"
+                            f"Unable to store points for {errors} out of {len(self.channels)} channels\n\n"
+                            f"{expiryString}"
                             f"Feel free to exit, thank you for using TEPM <3\n"
                             )
                 # forms final string with error count
@@ -3133,7 +3108,7 @@ class tepmWindow(QWidget):
             # if there were no errors
                 finalString = (
                             f"All channels scoured - stats have been saved to CSV!\n\n"
-                            f"{expiryString}\n\n"
+                            f"{expiryString}"
                             f"Feel free to exit, thank you for using TEPM <3\n"
                             )
                 # forms final string with no errors
@@ -3176,6 +3151,10 @@ class tepmWindow(QWidget):
             # shows the starter window
             ctrl.stopPredictionWorker.emit()
             # calls the stopper to stop polling new prediction data
+            if getattr(self, "pointWorker", None) is not None:
+            # if the point/streak worker is defined
+                self.pointWorker.stop()
+                # sends a signal to stop the pointWorker
             self.pastChannels.clear()
             # clears the past channels (forces new data if re-opening prediction view)
             self.activeChannels.clear()
@@ -3190,6 +3169,12 @@ class tepmWindow(QWidget):
         # exit button
             self.savePredictions()
             # calls the savePredictions to save current stats
+            ctrl.stopPredictionWorker.emit()
+            # calls the stopper to stop polling new prediction data
+            if getattr(self, "pointWorker", None) is not None:
+            # if the point/streak worker is defined
+                self.pointWorker.stop()
+                # sends a signal to stop the pointWorker
             self.taskLabelChanger("Exiting...")
             # user inform
             self.browserPage.deleteLater()
@@ -3429,7 +3414,8 @@ class tepmWindow(QWidget):
             self.eop()
             # calls "end of program" to show menu and exit buttons
             ctrl.predictionTimerOverride.emit()
-            # sends a signal to skip the initial 7 second wait to get first data right away
+            # signals the prediction thread to skip waiting and immediately return data (to update UI faster)
+            # this way, user interactions are much faster to display some return, versus just waiting for the 3-7 second timer to tick
             
         elif action == "Swap":
         # if user pressed swap button/enter
@@ -3446,6 +3432,8 @@ class tepmWindow(QWidget):
                 # sends a signal to indicate a new channel
                 self.predictChannelLine.setText("")
                 # clears the text entry field
+                self.predictionUserInformSignal.emit(f"Getting data for {newChannel}...")
+                # user inform
                 self.pastChannels["swap"] = True
                 # sets the boolean in the pastChannels map to True, telling predictUpdateUI to reset channel info
 
@@ -4121,14 +4109,10 @@ class tepmWindow(QWidget):
                             # if the stored outcome is the same as the winner
                                 self.predictResultLabel.setText(f"Winning outcome: {winOutcomeTitle}!")
                                 # text if user bet and won
-                                if ownVoteWin:
-                                # if the variable is defined
-                                    pass
-                                    # does nothing
-                                else:
+                                if ownVoteWin is None:
                                 # not defined
-                                    ownVoteWin = self.predictionNumbers[eventID].get("winPoints", ownVoteSum)
-                                    # uses the stored amount (if one is set, otherwise defaults to the vote, which will result in 0 visually, but won't crash)
+                                    ownVoteWin = int(self.predictionNumbers[eventID].get("winPoints", ownVoteSum) + ownVoteSum)
+                                    # uses the stored amount (if one is set, otherwise defaults to the user vote, which will result in something wrong visually, but won't crash)
                                 newPoints = (ownVoteWin - ownVoteSum)
                                 # gets the amount of points won (gained)
                                 winString = f"You won {ownVoteWin:,.0f} {pointsString} with a bet of {ownVoteSum:,.0f} {pointsString}! (+{(newPoints):,.0f})"
@@ -4293,7 +4277,7 @@ class tepmWindow(QWidget):
                 # tries to get the outcome of the user vote
                     votedOption = self.predictionID[event]["id"]
                     # gets the voted outcome ID
-                    selectedButton = self.predictionKeys[event][votedOption]
+                    selectedButton = self.predictionKeys[event][votedOption]["button"]
                     # gets the selected button via linked prediction key
                 except:
                 # if it can't find that info
@@ -4352,6 +4336,10 @@ class tepmWindow(QWidget):
                     optionName = self.predictionID[eventID]["title"]
                     currentBet = self.predictionID[eventID]["id"]
                     # grabs the outcome name and ID for the voted option
+                else:
+                # if there's a dictionary but no entry
+                    currentBet = None
+                    # sets to None
             else:
             # if there's not a bet yet
                 currentBet = None
@@ -4385,11 +4373,11 @@ class tepmWindow(QWidget):
 
         eventID = self.predictionID.get("lastID", False)
         # gets the last stored event ID
-        eventType = self.predictionID.get("lastType", False)
+        eventType = self.predictionID.get("lastType", "unavailable")
         # gets the last stored event type (active, locked, resolved, refunded)
 
         if eventID and eventType:
-        # if the event ID is valid/exists (there's a bet)
+        # if the event ID is valid/exists (there's a prediction)
             if eventType == "active":
             # if the event is active
                 selectedButton = self.outcomeButtonsInts[button]
@@ -4398,7 +4386,7 @@ class tepmWindow(QWidget):
                 # if the given button is available (there's an outcome matching this button)
                     stored = self.predictionID.get(eventID, {"id": False})
                     # grabs the stored dictionary for the event (if none exists, sets a false default)
-                    if stored["id"]:
+                    if stored.get("id", False):
                     # if there's already a voted outcome
                         self.predictionUserInformSignal.emit(f"Can't select an outcome with an active bet!")
                         # user inform
@@ -4412,6 +4400,10 @@ class tepmWindow(QWidget):
                 # button not visible (can't vote for that)
                     self.predictionUserInformSignal.emit(f"Can't select an outcome that's not available!")
                     # user inform
+            else:
+            # event is not active
+                self.predictionUserInformSignal.emit(f"Can't select an outcome for a {eventType} prediction!")
+                # user inform
 
 
 
@@ -4622,13 +4614,15 @@ class tepmWindow(QWidget):
                         bet = stageBet
                         # sets the stage bet size instead
                     else:
+                    # staged bets off or balance not larger
                         bet = defaultBet
                         # sets the default bet size instead
-                if bet < minimumBet:
-                # if the bet is lower than the minimum bet
+                if bet < minimumBet <= currentBal:
+                # if the bet is lower than the minimum bet, and the minimum bet is smaller than the balance available
                     self.predictAmountLine.setText(f"{minimumBet}")
                     # sets the minimum bet into the bet amount line
-                else:
+                elif bet <= currentBal:
+                # if the bet is greater than the minimum yet smaller than available balance
                     self.predictAmountLine.setText(f"{bet}")
                     # sets the calculated bet into the bet amount line
             else:
@@ -5988,24 +5982,31 @@ class AppState:
 
 class PointWorker(QObject):
     """A class to handle point/streak grabbing"""
-    # signals to communicate with UI
+
     pointWorkerProgress = pyqtSignal(dict)
-    # stores the percentage, channel name and points inside a pyqt signal, to update UI
+    """A pyQt signal to update the point/streak UI on progress with a dictionary"""
     pointWorkerDone = pyqtSignal(int, int, list, int)
-    # gets set when done
+    """A pyQt signal to update the point/streak UI when finished (errors: int, maxStreak: int, expiring streaks: list, points of override channel: int)"""
 
     def __init__(self, state, channels):
         super().__init__()
+
         self.state = state
-        # stores the appstate (gets pushed to pointGrabber, has token)
+        # stores the appstate (gets pushed to pointGrabber, contains auth token)
         self.channels = channels
-        # stores channels passed
+        # stores channels passed in the list
         self.running = True
-        # sets running to true
+        # sets running to True
         self.streakMap = streakMap 
         # the streak map that contains the streak-grabbable channels
         self.overrideChannel = overrideChannel
         # the channel to potentially override with
+
+    @pyqtSlot()
+    def stop(self):
+    # stops the point worker
+        self.running = False
+        # sets running to False
 
     @pyqtSlot()
     def run(self):
@@ -6026,18 +6027,41 @@ class PointWorker(QObject):
 
         if self.overrideChannel == None:
         # if no override channel is defined, goes through the list
-
+            if activeOnly:
+            # if the activeOnly boolean is True (only checking active streaks)
+                self.pointWorkerProgress.emit({"type": "Active"})
+                # emits a message to indicate the 
+                QThread.msleep(3000)
+                # waits 3 seconds (ensures visual is seen)
             for num, channel in enumerate(self.channels):
             # goes through each channel in the list (gets channel and index)
+                if not self.running:
+                # if the run status changes to False (user exited/went to menu)
+                    break
+                    # stops looping
 
                 errorBool = False
                 # defaults the error boolean to false
+                cooldown = 1000
+                # defaults the thread msleep timer to 1000 ms (1s/channel)
+
+                if activeOnly:
+                # if the boolean for the "active streaks only" is true, won't check *all* channels
+                    if channel in streakMap and streakMap[channel].get("Active", False):
+                    # if the channel is in the streak map and it's set to active
+                        streak = streakGrabber(self.state, channel, int(streakMap[channel]["ID"]))
+                        # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
+                    else:
+                    # if the channel *isn't* in the map or isn't active
+                        QThread.msleep(100)
+                        # sleeps for 100ms (prevents insane CPU load)
+                        continue
+                        # skips iteration
 
                 if enablePoints:
                 # if the point grabbing is enabled
                     points = pointGrabber(self.state, channel)
                     # calls the point grabber to get the channel's point amount
-
                     if points["success"]:
                     # checks the points entry for success boolean
                         foundPoints = int(points["points"])
@@ -6046,7 +6070,7 @@ class PointWorker(QObject):
                         # adds the channel's points to the total amount
                     else:
                     # if the point entry success is False (something went wrong)
-                        foundPoints = "Not found"
+                        foundPoints = None
                         # stores string
                         errorBool = True
                         # sets the error bool to true (will tell the UI to display error text)
@@ -6054,43 +6078,29 @@ class PointWorker(QObject):
                         # on error, adds an error to counter
                 else:
                 # if point checking is disabled
-                    foundPoints = "Not checked"
-                    self.totalPoints = "Not checked"
+                    foundPoints = None
+                    self.totalPoints = None
                     # sets the points to nothing
 
                 if enableStreaks:
                 # if the streak-grabbing is enabled
                     if enablePoints:
                     # if points and streaks are enabled, slows down the process a bit more
-                        QThread.msleep(1000)
-                        # sleeps for a second (slows down for UX + Twitch)
-
-                    if activeOnly:
-                    # if the boolean for the "active streaks only" is true, won't check *all* channels
-                        if channel in streakMap:
-                        # if the channel is in the streak map
-                            streak = streakGrabber(self.state, channel, int(streakMap[channel]["ID"]))
-                            # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
-                        else:
-                        # if the channel *isn't* in the map
-                            streak = {"success": False, "error": "No active streak stored"}
-                            # forms a custom dictionary to pass to csv
+                        cooldown += 750
+                        # adds 750ms of cooldown to each request 
+                    if channel in streakMap:
+                    # if the channel is in the streak map
+                        streak = streakGrabber(self.state, channel, int(streakMap[channel]["ID"]))
+                        # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
                     else:
-                    # if the boolean isn't active only, goes through all
-                        if channel in streakMap:
-                        # if the channel is in the streak map
-                            streak = streakGrabber(self.state, channel, int(streakMap[channel]["ID"]))
-                            # calls the streak grabber with the channel ID (doesn't need to make a second request in this case)
-                        else:
-                        # if the channel isn't in the map
-                            streak = streakGrabber(self.state, channel)
-                            # calls the streak grabber to get the streak
-
+                    # if the channel isn't in the map
+                        streak = streakGrabber(self.state, channel)
+                        # calls the streak grabber to get the streak (omits the ID, has to make a second request for the ID)
                     if streak["success"]:
                     # if the streak success entry is true
                         streakNum = int(streak["streak"])
                         # gets the streak
-                        if not streak.get("expires") == None:
+                        if streak.get("expires", None) is not None:
                         # if there's a set expiry date (not None)
                             expiring = True
                             # sets the flag to True so it gets spotted
@@ -6103,14 +6113,14 @@ class PointWorker(QObject):
                             expiring = False
                             # sets the flag to False so it doesn't get set
 
-                        if streakNum > 1 and channel not in streakMap:
-                        # if there's a streak present and the channel isn't stored yet, plus the config option to add them to the streak map is on
+                        if channel not in streakMap:
+                        # if there's a streak present and the channel isn't stored yet
                             streakMap[channel] = {
                                 "ID": int(streak["channelID"]),
-                                "Active": True
+                                "Active": (True if int(streak.get("streak", 0)) > 1 else False)
                             }
-                            # stores the channel with its ID and state
-                        elif streakNum == 0 and channel in streakMap and autoRemoveStreaks:
+                            # stores the channel with its ID and active state (True if the streak is >1, False if it's 0 or 1)
+                        elif streakNum in [0, 1] and autoRemoveStreaks:
                         # if there's no streak, the channel is in the map and the option to remove stales is on
                             streakMap[channel] = {
                                 "ID": int(streak["channelID"]),
@@ -6130,7 +6140,6 @@ class PointWorker(QObject):
                     # if the current streak is larger than the stored max streak
                         self.maxStreak = streakNum
                         # reassigns the max streak to match
-
                 else:
                 # if the streak-grabbing is disabled
                     streakNum = 0
@@ -6143,7 +6152,7 @@ class PointWorker(QObject):
                     errorReason = points.get("error", "None")
                     # gets the error reason from points, None if none is found
                 else:
-                # if points are off or streaks are on
+                # if points are off and/or streaks are on
                     errorReason = streak.get("error", "None")
                     # gets the error reason from streak instead, None if none found
 
@@ -6173,7 +6182,7 @@ class PointWorker(QObject):
                         "index": num,
                         "pointsOn": enablePoints,
                         "points": foundPoints,
-                        "error": errorBool,
+                        "error": (None if errorBool is False else errorReason),
                         "total": self.totalPoints,
                         "streaksOn": enableStreaks,
                         "streak": streakNum,
@@ -6188,34 +6197,36 @@ class PointWorker(QObject):
                         "index": num,
                         "pointsOn": enablePoints,
                         "points": foundPoints,
-                        "error": errorBool,
+                        "error": (None if errorBool is False else errorReason),
                         "total": self.totalPoints,
                         "streaksOn": enableStreaks,
                         "streak": streakNum,
-                        "expiresAt": False
+                        "expiresAt": None
                     }
                     # forms a progress dictionary to pass
 
                 self.pointWorkerProgress.emit(self.progressDict)
                 # sends a progress update to the headless UI updater
+                QThread.msleep(cooldown)
+                # waits the cooldown-dictated number of milliseconds
 
-                QThread.msleep(1000)
-                # waits 1s/channel
-
-            with open(streakMapPath, "w") as strk:
-            # opens the streak config location
-                json.dump(streakMap, strk, indent=3)
-                # dumps the map into file
-            
-            self.csvWriter(csvEntries, self.errorCount, self.maxStreak, self.expiringList, None)
-            # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
-
+            if self.running:
+            # checks if the operation is still valid before saving (no use saving if cancelled)
+                with open(streakMapPath, "w") as strk:
+                # opens the streak config location
+                    json.dump(streakMap, strk, indent=3)
+                    # dumps the map into file
+                
+                self.csvWriter(csvEntries, self.errorCount, self.maxStreak, self.expiringList, None)
+                # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
+            else:
+            # if the operation is cancelled prior to completion
+                self.pointWorkerDone.emit(0, 0, [], 0)
+                # sends an empty signal
         else:
         # if a channel override is set (only one channel)
-
             channel = self.overrideChannel
             # sets the channel to the override
-
             points = pointGrabber(self.state, channel)
             # calls the point grabber to get the channel's point amount
 
@@ -6272,7 +6283,7 @@ class PointWorker(QObject):
                 "index": 1,
                 "pointsOn": enablePoints,
                 "points": foundPoints,
-                "error": errorBool,
+                "error": (None if errorBool is False else points["error"]),
                 "total": self.totalPoints,
                 "streaksOn": enableStreaks,
                 "streak": streakNum
@@ -6281,7 +6292,6 @@ class PointWorker(QObject):
 
             self.pointWorkerProgress.emit(self.progressDict)
             # sends a progress update to the headless UI updater
-
             self.csvWriter(csvEntries, self.errorCount, streakNum, None, foundPoints)
             # calls the csvWriter with the formed map (dictionary) and the number of errors (gets passed to finished UI)
 
@@ -6306,7 +6316,7 @@ class PointWorker(QObject):
                 # stores the points (not found if can't find)
                 "Streak": values.get("streak", "Not found"),
                 # stores the streak (not found if it can't find)
-                "Error": values.get("error", ""),
+                "Error": values.get("error", None),
                 # stores the error boolean (nothing if none is set)
                 "Reason": values.get("reason", ""),
                 # stores the error reason (nothing if none is set)
@@ -6317,16 +6327,15 @@ class PointWorker(QObject):
 
         dataframe = pnd.DataFrame(rows)
         # forms a dataframe from the formed rows
-
         dataframe.to_csv(csvPath, index=False)
         # pushes everything to the csv file
 
-        if not expiryList:
-        # if the expiry list isn't defined (not passed)
+        if expiryList is None:
+        # if the expiry list isn't defined (not passed, empty)
             expiryList = []
             # makes an empty list
-        if not overridePoints:
-        # if the singlePoints wasn't passed
+        if overridePoints is None:
+        # if the single channel's points wasn't passed
             overridePoints = 0
             # sets to 0
 
@@ -6486,33 +6495,49 @@ class PredictionWorker(QObject):
         # if the return is a success
             if addon:
             # if this is adding points to an existing bet
-                ctrl.taskChange.emit(f'Added {bet:,.0f} to bet!')
+                ctrl.taskChange.emit(f"Added {bet:,.0f} to bet!")
                 # sets info text with addon confirmation
+                caller = "TEPM"
+                # calling function is the main program
             elif autoBet:
             # if it's not adding points, but autobet is the sender
                 ctrl.taskChange.emit(f'Auto-bet {bet:,.0f} on "{selected}"\nMay the odds be ever in your favor!')
                 # user inform
+                caller = "autoBet"
+                # calling function is the auto-bet program
             else:
             # autobet is false and it's not adding points
                 ctrl.taskChange.emit(f'Bet {bet:,.0f} on "{selected}"\nMay the odds be ever in your favor!')
                 # sets info text
+                caller = "TEPM"
+                # calling function is the main program
             ctrl.mainWindow.predictAmountLine.setText("")
             # clears the text
-            ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": bet})
+            ctrl.eventHandlerSignal.emit({"eventID": eventID, "bet": bet}, caller)
             # sends a signal to the auto-bet function to prevent double bets (manual bets override)
             ctrl.predictionTimerOverride.emit()
             # signals the prediction thread to skip waiting and immediately return data (to update UI faster)
+            # this way, user interactions are much faster to display some return, versus just waiting for the 3-7 second timer to tick
         else:
         # if the return isn't a success
             err = betInfo["error"]
             # grabs the error message from the return
             if "10054" in err or "aborted" in err:
-            # if the windows network error 10054 is present in the error string (looks for "10054" and "connection aborted")
+            # if the Windows network error 10054 is present in the error string (looks for "10054" and "connection aborted")
+            # 10054 is kind of just the generic Windows network error given... if you want to learn more, you can read this; https://learn.microsoft.com/en-us/troubleshoot/sql/database-engine/connect/tls-exist-connection-closed
+            # tl;dr is "there's about 5 billion things that can cause this error, if you see it, idk like try restarting I guess"
                 err = "Windows network error! Please try again in a couple seconds..."
                 # overrides the error message 
             elif "EVENT_NOT_ACTIVE" in err:
-            # if the event is closed (timer can be off a little)
+            # if the event is closed (timer can be off a little, also ensures keybinds are given a proper user inform)
                 err = "Prediction has closed!"
+                # overrides the error message
+            elif "SPECTATOR" in err:
+            # if the bet can't be placed because of a "SPECTATOR_MODE_INELIGIBLE" error (user can't be logged into that channel)
+            # basically, Twitch periodically checks what streams you're actively in (for tracking purposes), and if you're in >2 streams, that tracking can break
+            # typically, things like Drops and channel point gains just completely shatter if you're in 3+ streams - occasionally you'll just not get anything, sometimes half the progress, 1/3rd...
+            # this is the manifestation of that error in prediction form - it's just Twitch saying "you're already logged as active in x streams, we can't have you here, too"
+                err = "Can't access the stream! Ensure you don't have multiple streams open"
                 # overrides the error message
             ctrl.taskChange.emit(f"Failed to place a bet!\n({err})")
             # changes the text to inform (includes error message)
@@ -6875,8 +6900,6 @@ class AutoBetWindow(QObject):
         """The fallback outcome to use if there's not enough outcomes (1 or 2)"""
         self.pastEvents = {}
         """Prediction history for auto-better"""
-        self.betLock = threading.Lock()
-        """A lock to prevent multi-access to while loop"""
         self.refresh = threading.Event()
         """A threading event to wait out a timer unless skipped"""
         self.betStatus = False
@@ -6945,6 +6968,10 @@ class AutoBetWindow(QObject):
         
         if inputDict:
         # if a dictionary is passed (and not just checked by auto-better)
+            if inputDict.get("channel", None):
+            # if there's a defined channel being sent to the auto-better
+                self.selectedChannel = inputDict["channel"]
+                # sets the current channel stored here to match (so that when the first communication happens, both are on the "same page")
             try:
             # if the window is alive, tries to send data (try in case the connection fails)
                 self.autoBetWindowSP.stdin.write(json.dumps(inputDict) + "\n")
@@ -6966,29 +6993,47 @@ class AutoBetWindow(QObject):
         """Function to manage the auto-bet window output"""
         # this is only sent when an auto-bet ruleset is defined and confirmed
 
-        if outputDict["stop"]:
-        # if the stop is set to True
+        outputType = outputDict.get("type", "debug")
+        # gets the type of dictionary received (defaults to debug)
+
+        if outputType == "init":
+        # initialisation request (once auto-bet is done, sends empty dict)
+            pass
+            # doesn't do anything (runs the signal and dict at the end)
+
+        elif outputType == "stop":
+        # if it's a stop request (stop button)
             ctrl.taskChange.emit("Stopping auto-better...")
             # user inform
             self.betStatus = False
             # sets status to False (off)
-            ctrl.autoBetDataSignal.emit({"type": "status", "status": self.betStatus})
-            # tells the auto-bet window what the current status is
-            return
-            # stops running this function
 
-        if outputDict.get("debug", False):
+        elif outputType == "debug":
         # if the output dictionary is about debug printing
             print(outputDict)
             # just prints the whole thing
             return
             # stops running this function
 
-        if outputDict["newChannel"]:
-        # if there's a new channel request instead
-            ctrl.taskChange.emit(f"Checking data for {outputDict["newChannel"]}...")
+        elif outputType == "match":
+        # if it's a matching request (to match auto-bet channel to currently open prediction channel)
+            ctrl.taskChange.emit("Matching auto-bet channel to prediction view...")
             # user inform
-            newChannelData = pointGrabber(self.state, outputDict["newChannel"])
+            ctrl.mainWindow.sendAutoBetData.emit()
+            # sends a signal requesting for new data from main
+            ctrl.predictionTimerOverride.emit()
+            # signals the prediction thread to skip waiting and immediately return data (to update UI faster)
+            # this way, user interactions are much faster to display some return, versus just waiting for the 3-7 second timer to tick
+            self.betStatus = False
+            # sets to false to prevent any unintended bets
+
+        elif outputType == "swap":
+        # if it's a channel swap request
+            newChannel = outputDict.get("newChannel", None)
+            # grabs the new channel dictionary entry (or None, if one isn't set)
+            ctrl.taskChange.emit(f"Checking data for {newChannel}...")
+            # user inform
+            newChannelData = pointGrabber(self.state, newChannel)
             # calls the point grabber to try and get both the balance and case-sensitive name
             if newChannelData["success"]:
             # successful data grab
@@ -6999,26 +7044,27 @@ class AutoBetWindow(QObject):
                     self.selectedChannel = caseName
                     # sets the selected channel
                 else:
-                    self.selectedChannel = outputDict["newChannel"]
+                    self.selectedChannel = newChannel
                     # uses the user-defined one instead
-                ctrl.taskChange.emit(f"Sending {self.selectedChannel} data for auto-bet...")
+                ctrl.taskChange.emit(f"Sending {self.selectedChannel} data to auto-bet...")
                 # user inform
-                ctrl.autoBetDataSignal.emit({"type": "channel", "channel": self.selectedChannel})
-                # calls the input function to pass the new channel
+                ctrl.autoBetDataSignal.emit({"type": "full", "channel": self.selectedChannel, "balance": newChannelData["points"], "pointsName": newChannelData["pointsName"]})
+                # calls the input function to pass the new channel and balance details
                 self.selectedBalance = newChannelData["points"]
                 # stores the balance in self
-                ctrl.autoBetDataSignal.emit({"type": "balance", "balance": newChannelData["points"], "pointsName": newChannelData["pointsName"]})
-                # sends the balance details, too
             else:
-            # unsuccessful
-                ctrl.taskChange.emit(f"Couldn't get data for {outputDict["newChannel"]} due to {newChannelData["error"]}")
+            # unsuccessful data grab
+                ctrl.taskChange.emit(f"Couldn't get data for {newChannel} due to: {newChannelData["error"]}")
                 # user inform with error
-                return
-                # stops running this function
-            outputChannel = self.selectedChannel
-            # sets the variable to match
-        else:
-        # if there's not a new channel, just checks the current channel
+                ctrl.autoBetDataSignal.emit({"type": "full", "channel": self.selectedChannel, "balance": 0, "pointsName": "Points"})
+                # signals the auto-bet program with the new channel and balance details
+            ctrl.taskChange.emit(f"Swapping auto-bet channel to {(self.selectedChannel)}...")
+            # user inform
+            self.betStatus = False
+            # ensures the betting isn't on yet (no set rules)
+
+        elif outputType == "rules":
+        # if it's a ruleset set/update request
             outputChannel = outputDict["channel"]
             # stores the output dictionary's passed channel in a temp variable for QoL
             for target in outputDict.get("targetOutcomes", []):
@@ -7032,33 +7078,23 @@ class AutoBetWindow(QObject):
             self.fallbackOutcomeMin = outputDict.get("fallbackOutcomeMin", None)
             # grabs the last fallback outcome to set if can't use full (1-2)
 
-        if outputDict["type"] == "swap":
-        # if the type is a swap
-            ctrl.taskChange.emit(f"Swapping auto-bet channel to {outputChannel}...")
-            # user inform
-            ctrl.autoBetDataSignal.emit({"type": "channel", "channel": outputChannel})
-            # signals the auto-bet program with the new channel
-            self.betStatus = False
-            # ensures the betting isn't on yet (no set rules)
-        elif outputDict["type"] == "rules":
-        # if the type is a rule-definition
             if self.betStatus:
             # if it's already on
-                ctrl.taskChange.emit(f"Updating auto-bet rules for {outputChannel}...")
+                ctrl.taskChange.emit(f"Updating auto-bet rules for {self.selectedChannel}...")
                 # user inform with confirmation of "update"
+                self.betStatus = True
+                # ensures the betting is enabled
             else:
             # betting is now being enabled
                 ctrl.taskChange.emit(f"Starting auto-better for {outputChannel}...")
                 # more generic user inform
                 self.betStatus = True
-                # sets to True to show it's enabled
-                self.betStartSignal.emit()
-                # sends a start signal
+                # sets to True to enable betting
                 self.refresh.set()
                 # sets an event to get new prediction data (new channel) right away
 
-        self.selectedChannel = outputChannel
-        # grabs the targeted channel, stores in self
+        self.betStartSignal.emit()
+        # sends a start signal
         ctrl.autoBetDataSignal.emit({"type": "status", "status": self.betStatus})
         # tells the auto-bet window what the current status is
 
@@ -7102,15 +7138,17 @@ class AutoBetWindow(QObject):
 ### Prediction Check Thread ###
 
     def autoBetCheckThread(self):
-        """Thread manager for autobetchecker"""
-        self.betCheckThread = threading.Thread(
-            # makes a thread just for the auto bet checker
-            target=self.autoBetChecker,
-            name="AutoBetCheckThread",
-            daemon=True
-        )
-        self.betCheckThread.start()
-        # starts the thread
+        """Thread manager for autoBetChecker"""
+        if getattr(self, "betCheckThread", None) is None:
+        # checks if the thread already exists
+            self.betCheckThread = threading.Thread(
+                # makes a thread just for the auto bet checker
+                target=self.autoBetChecker,
+                name="AutoBetCheckThread",
+                daemon=True
+            )
+            self.betCheckThread.start()
+            # starts the thread
 
 ### Prediction Checker ###
 
@@ -7118,14 +7156,10 @@ class AutoBetWindow(QObject):
         """Function to handle the prediction checking"""
         while self.running:
         # while this class is active
-            if not self.betLock.acquire(blocking=False):
-            # if the betLock is in use, this function is already running a different call, if not, grabs the lock
-                return
-                # doesn't proceed
             self.refresh.wait(timeout=10)
             # waits 10 seconds, unless there's an event
-            if self.selectedChannel:
-            # if there's a real channel set
+            if self.selectedChannel is not None:
+            # if there's a channel set
                 betDict = grabPrediction(self.state, self.selectedChannel)
                 # calls the prediction grabbing function with the selected channel
                 if betDict["success"]:
@@ -7138,14 +7172,12 @@ class AutoBetWindow(QObject):
                     # calls the balance grabbing function with the selected channel
                     if balDict["success"]:
                     # successful grab
-                        if self.selectedBalance != balDict["points"]:
-                        # if the balance returned isn't the same as the stored balance
-                            inputDict = {"type": "balance", "balance": balDict["points"], "pointsName": balDict["pointsName"]}
-                            # forms a dictionary from the return
-                            ctrl.autoBetDataSignal.emit(inputDict)
-                            # calls the input function to pass the dictionary, updates UI
-                            self.selectedBalance = balDict["points"]
-                            # stores the new amount in self
+                        inputDict = {"type": "balance", "balance": balDict["points"], "pointsName": balDict["pointsName"]}
+                        # forms a dictionary from the return
+                        ctrl.autoBetDataSignal.emit(inputDict)
+                        # calls the input function to pass the dictionary, updates UI
+                        self.selectedBalance = balDict["points"]
+                        # stores the new amount in self
                         if self.betStatus:
                         # if betting is enabled
                             if actives and len(actives) > 0:
@@ -7184,21 +7216,21 @@ class AutoBetWindow(QObject):
                                             # sends it via the visual signal
                                             self.pastEvents[resolvedID]["payout"] = pointData
                                             # stores it in self, to prevent new checks with the same event
-            self.refresh.clear()
-            # clears the event
-            self.betLock.release()
-            # releases the lock, allowing a new instance to run
+                self.refresh.clear()
+                # clears the event
 
 ### Past Events Handler ###
 
-    def pastEventsHandler(self, eventDict: dict):
+    def pastEventsHandler(self, eventDict: dict, caller:str):
         """Function to handle the past events to ensure no duplicate bets are placed"""
         if not eventDict["eventID"] in self.pastEvents:
         # checks if the eventID has already been entered into the pastevents (continues if not)
             self.pastEvents[eventDict["eventID"]] = {"bet": eventDict["bet"], "payout": None}
             # stores the bet inside the past events map under the event ID
-            ctrl.autoBetDataSignal.emit({"type": "bet"})
-            # sends a visual update to update the bets made counter (the dict doesn't get read)
+            if caller == "autoBet":
+            # if this is called from the autobet function
+                ctrl.autoBetDataSignal.emit({"type": "bet"})
+                # sends a visual update to update the bets made counter (the dict doesn't get read)
 
 ### Bet Handler ###
 
@@ -7207,7 +7239,6 @@ class AutoBetWindow(QObject):
 
         running = self.autoBetInput()
         # calls the bet input to check the state of the window
-
         if not running or not self.betStatus:
         # if it's not actually running or the bets are disabled by stop/some other flag
             return
@@ -7231,7 +7262,6 @@ class AutoBetWindow(QObject):
 
         activeOutcomes = predictionDict["outcomes"]
         # gets all the outcomes
-
         for x in range(len(activeOutcomes)):
         # goes through each outcome and its ID
             outcome = activeOutcomes[x]
@@ -7438,7 +7468,7 @@ class SuperController(QObject):
     """A pyQt signal to poll the status of the auto-bet window"""
     autoBetDataSignal = pyqtSignal(dict)
     """A pyQt signal to pass a dictionary of data to the auto-bet view (to update window UI)"""
-    eventHandlerSignal = pyqtSignal(dict)
+    eventHandlerSignal = pyqtSignal(dict, str)
     """A pyQt signal to add previous bets to the auto-bet history"""
 
 ### Init ###
@@ -7887,7 +7917,7 @@ class SuperController(QObject):
                 lastBetID = False
                 # sets gibberish string to not match current
 
-            if len(activePrediction) > 0:
+            if activePrediction and len(activePrediction) > 0:
             # if the active predict list has more than 0 elements
                 truePrediction = activePrediction[0]
                 # grabs the 0th element from the list (now a dictionary)
@@ -7896,7 +7926,7 @@ class SuperController(QObject):
                 rawTimestamp = truePrediction["createdAt"]
                 # grabs the raw creation timestamp (YYYY-MM-DDTHH:MM:SS.*ms*Z)
 
-            elif len(lockedPrediction) > 0:
+            elif lockedPrediction and len(lockedPrediction) > 0:
             # if the locked predict list has more than 0 elements
                 truePrediction = lockedPrediction[0]
                 # grabs the 0th element from the list (now a dictionary)
@@ -7905,7 +7935,7 @@ class SuperController(QObject):
                 rawTimestamp = truePrediction["lockedAt"]
                 # grabs the lock timestamp
  
-            elif len(resolvedPredictions) > 0:
+            elif resolvedPredictions and len(resolvedPredictions) > 0:
             # if the resolved (passed) predict list has more than 0 elements
                 truePrediction = resolvedPredictions[0]["node"]
                 # grabs the 0th element from the list (now a dictionary), grabs the node (information)

@@ -118,24 +118,35 @@ class asyncAutoBetWindow(QMainWindow):
             }
         """)
         # stylesheet
-        self.channelLabel.setMinimumSize(120, 40)
+        self.channelLabel.setMinimumSize(240, 40)
         # min size
         self.channelLabel.setToolTip("Currently active channel")
         # tooltip
 
-        self.swapChannelButton = QPushButton("Swap Channel")
+        self.setChannelButton = QPushButton("Set Channel")
         """A button to swap the active channel"""
-        self.swapChannelButton.setToolTip("Swap streams (opens input)")
+        self.setChannelButton.setToolTip("Opens an input window to enter a new stream")
         # tooltip
-        self.swapChannelButton.setMinimumSize(80, 30)
+        self.setChannelButton.setMinimumSize(120, 30)
         # min size
 
-        self.channelLayout.addWidget(self.channelLabel, 0, 0, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.channelLayout.addWidget(self.swapChannelButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.matchChannelButton = QPushButton("Match Channel")
+        """A button to swap the active channel"""
+        self.matchChannelButton.setToolTip("Set the auto-bet channel to match the open prediction view channel")
+        # tooltip
+        self.matchChannelButton.setMinimumSize(120, 30)
+        # min size
+
+        self.channelLayout.addWidget(self.channelLabel, 0, 0, 1, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.channelLayout.addWidget(self.setChannelButton, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.channelLayout.addWidget(self.matchChannelButton, 1, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         # adds all to layout
 
-        self.swapChannelButton.clicked.connect(self.swapChannel)
-        # connects the button to the function
+        self.setChannelButton.clicked.connect(self.swapChannel)
+        # connects the set channel button to the function
+        self.matchChannelButton.clicked.connect(lambda: self.rulesetSender(False, "matchStream", False))
+        # connects the match channel button to the ruleset sender
+        
 
     ### Status & Details ###
 
@@ -181,7 +192,7 @@ class asyncAutoBetWindow(QMainWindow):
         self.predictionNumLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
 
-        self.gainLabel = QLabel(" ")
+        self.gainLabel = QLabel("Points gained from auto-bet: +/- 0")
         """Label to display current point gains from auto-bets"""
         self.gainLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
         # centers the text
@@ -348,6 +359,8 @@ class asyncAutoBetWindow(QMainWindow):
         # sets focus to main window, rather than any element
         self.inputThreadManager()
         # runs the input thread function, starting the input poll thread
+        print(json.dumps({"type": "init"}), flush=True)
+        # sends an init command to start the communication loop on both ends
 
 
 
@@ -434,20 +447,22 @@ class asyncAutoBetWindow(QMainWindow):
 
             predictionDict = json.loads(line)
             # loads the sent line as a json dictionary
+            dictType = predictionDict["type"]
+            # grabs the type of dictionary
 
-            if predictionDict["type"] == "status":
+            if dictType == "status":
             # if the type is status (enabled/disabled check)
                 status = predictionDict["status"]
                 # grabs the status boolean
                 self.statusUpdater(status)
                 # calls the label updater based on the status boolean
 
-            elif predictionDict["type"] == "exit":
+            elif dictType == "exit":
             # if the type is an exit command
                 autoBetWindowApp.exit()
                 # exits the app
 
-            elif predictionDict["type"] == "bet":
+            elif dictType == "bet":
             # if the type is a bet (made a bet)
                 self.predictionsMade += 1
                 # adds 1 to predictions made
@@ -456,10 +471,11 @@ class asyncAutoBetWindow(QMainWindow):
                     self.predictionNumLabel.setText(f"Auto-bet on 1 prediction")
                     # changes the label to match
                 else:
+                # not 1 (0 is handled by default, so >1)
                     self.predictionNumLabel.setText(f"Auto-bet on {self.predictionsMade} predictions")
                     # changes the label to match
 
-            elif predictionDict["type"] == "payout":
+            elif dictType == "payout":
             # if the type is a payout update (win/loss -> gain label)
                 gain = int(predictionDict["data"]["gain"])
                 # gets the points "gained"
@@ -469,11 +485,11 @@ class asyncAutoBetWindow(QMainWindow):
                 # gets the total difference (points won, or how many points were lost if gain is 0)
                 self.gainedPoints += total
                 # adds to the running total
-                self.predictionNumLabel.setText(f"Points gained from auto-bet: {self.gainedPoints:,.0f}")
+                self.gainLabel.setText(f"Points gained from auto-bet: {self.gainedPoints:,.0f}")
                 # changes the label to match formatted total
 
-            elif predictionDict["type"] == "balance":
-            # if the type is a balance update
+            elif dictType == "balance" or dictType == "full":
+            # if the type is a balance update (or full)
                 balance = predictionDict["balance"]
                 # gets the passed balance
                 pointsName = predictionDict["pointsName"]
@@ -481,8 +497,8 @@ class asyncAutoBetWindow(QMainWindow):
                 self.textSwapSignal.emit(balance, pointsName)
                 # sends a signal to swap the balance and name of the points
 
-            elif predictionDict["type"] == "channel":
-            # if the type is channel 
+            if dictType == "channel" or dictType == "full":
+            # if the type is channel (or full)
                 channel = predictionDict["channel"].strip()
                 # gets the passed channel
                 if channel and self.selectedChannel != channel:
@@ -568,25 +584,29 @@ class asyncAutoBetWindow(QMainWindow):
     def rulesetSender(self, stopCalled:bool=False, channelSwap:str=None, targetOverride:bool=False):
         """The function that sends the confirmed ruleset to the main program"""
 
-        outputDict = {"stop": stopCalled}
+        outputDict = {}
         # dictionary to store all the requirements in
 
         if stopCalled:
         # if the boolean is set to True, meaning the button was used to stop the auto-better
             outputDict["type"] = "stop"
-            # stop type dictionary
+            # sets the type to a stop request
         else:
-        # not a stop command (confirm)
+        # not a stop command (confirm/swap)
             if channelSwap:
             # if there's a channel (to swap) defined
-                outputDict["newChannel"] = channelSwap
-                # adds a new channel entry
-                outputDict["type"] = "swap"
-                # swap type
+                if channelSwap == "matchStream":
+                # if the 'channel' is instead to match the current stream
+                    outputDict["type"] = "match"
+                    # sets the type to a match request
+                else:
+                # the channel is actually a real channel
+                    outputDict["newChannel"] = channelSwap
+                    # adds a new channel entry
+                    outputDict["type"] = "swap"
+                    # sets the type to a swap channel request
             else:
-                outputDict["newChannel"] = None
-                # sets empty entry instead
-
+            # no channel swap
                 outputDict["channel"] = self.selectedChannel
                 # gets the selected channel name (just a precaution thing to ensure the views are matched up)
 
@@ -696,8 +716,15 @@ autoBetWindowApp = QApplication(sys.argv)
 # base app instance (passes command line arguments)
 displayWindow = asyncAutoBetWindow()
 # creates a window reference
-tepmPID = int(sys.argv[1])
-# grabs the parent process' (TEPM) PID 
+if len(sys.argv) > 1:
+# if there's more than 1 sys argument (opened from file vs opened as subprocess)
+    tepmPID = int(sys.argv[1])
+    # grabs the parent process' (TEPM) PID 
+else:
+# if there is no argument
+    tepmPID = None
+    # sets as None
+
 
 sys.exit(autoBetWindowApp.exec())
 # exceutes the app task (runs the QApplication)
